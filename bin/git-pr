@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# git-pr — check out the branch for a GitHub PR by number.
+#
+# If that PR's branch already exists locally, just switch to it; otherwise fetch
+# it first. Requires the GitHub CLI (`gh`), authenticated for this repo.
+#
+# (Named `git pr`, not `git switch`: git always prefers its built-in `switch`
+# over a script, so a custom `git-switch` could never run.)
+#
+# Usage:
+#   git pr 923         check out the head branch of PR #923
+#   git pr -h          show this help
+#
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+git pr — check out the branch for a GitHub PR by number.
+
+If the PR's branch exists locally, switch to it; otherwise fetch it first.
+Requires the GitHub CLI (gh).
+
+Usage:
+  git pr 923    check out the head branch of PR #923
+  git pr -h     show this help
+EOF
+}
+
+case "${1:-}" in
+  -h|--help|"") usage; exit 0 ;;
+esac
+
+num="$1"
+echo "$num" | grep -qE '^[0-9]+$' || {
+  echo "git pr: expected a PR number, got '$num' (try -h)" >&2; exit 2; }
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "git pr: not inside a git repository" >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || {
+  echo "git pr: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
+
+# Resolve PR number → its head branch name.
+branch=$(gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null) || {
+  echo "git pr: couldn't find PR #$num in this repo" >&2; exit 1; }
+[ -n "$branch" ] || { echo "git pr: PR #$num has no head branch" >&2; exit 1; }
+
+if git show-ref --verify --quiet "refs/heads/$branch"; then
+  git switch "$branch"  # already local → just switch (no fetch)
+else
+  echo "git pr: fetching PR #$num ($branch)…"
+  # Open PRs: gh checks out the head branch and sets tracking. Merged/closed PRs
+  # whose branch was deleted from origin: fall back to refs/pull/<num>/head,
+  # which GitHub keeps around, into a local branch of the same name.
+  if ! gh pr checkout "$num" 2>/dev/null; then
+    echo "git pr: head branch is gone from origin; using refs/pull/$num/head…"
+    git fetch origin "refs/pull/$num/head:$branch"
+    git switch "$branch"
+  fi
+fi

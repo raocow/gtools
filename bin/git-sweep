@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# git-sweep — delete local branches already merged into the base branch.
+#
+# Safe by design: uses `git branch -d`, which refuses any branch that isn't
+# fully merged (never -D). Note: squash-merged branches are NOT caught — a
+# squash makes a brand-new commit, so the branch isn't an ancestor of the base.
+# Delete those by hand if your repo squash-merges.
+#
+# Usage:
+#   git sweep            delete local branches merged into the base
+#   git sweep -n         dry run — list what would be deleted, change nothing
+#   git sweep -b NAME    base branch to compare against (default: origin's default)
+#   git sweep -h         show this help
+#
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+git sweep — delete local branches already merged into the base branch.
+
+Safe: uses `git branch -d`, which refuses anything not fully merged (never -D).
+Squash-merged branches are NOT caught (a squash isn't an ancestor of the base).
+
+Usage:
+  git sweep          delete local branches merged into the base
+  git sweep -n       dry run — list what would be deleted, change nothing
+  git sweep -b NAME  base branch to compare against (default: origin's default)
+  git sweep -h       show this help
+EOF
+}
+
+dry=0
+base=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run) dry=1 ;;
+    -b|--base) shift; base="${1:-}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "git sweep: unknown option '$1' (try -h)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "git sweep: not inside a git repository" >&2; exit 1; }
+
+# Choose a base branch if none given: origin's default (origin/HEAD), else
+# main/master if present locally, else the current branch.
+if [ -z "$base" ]; then
+  base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's#^origin/##' || true)
+  if [ -z "$base" ]; then
+    for b in main master; do
+      if git show-ref --verify --quiet "refs/heads/$b"; then base=$b; break; fi
+    done
+  fi
+  [ -n "$base" ] || base=$(git rev-parse --abbrev-ref HEAD)
+fi
+
+git show-ref --verify --quiet "refs/heads/$base" || {
+  echo "git sweep: base branch '$base' not found" >&2; exit 1; }
+
+# Drop stale remote-tracking refs first (best effort; ignore offline failures).
+git fetch --prune --quiet 2>/dev/null || true
+
+current=$(git rev-parse --abbrev-ref HEAD)
+
+# Branches merged into the base, excluding the base itself and the current one.
+targets=""
+while IFS= read -r b; do
+  [ -z "$b" ] && continue
+  [ "$b" = "$base" ] && continue
+  [ "$b" = "$current" ] && continue
+  targets="$targets $b"
+done < <(git branch --merged "$base" --format='%(refname:short)')
+targets=$(echo $targets)  # trim whitespace
+
+if [ -z "$targets" ]; then
+  echo "git sweep: nothing merged into '$base' to delete."
+  exit 0
+fi
+
+if [ "$dry" = 1 ]; then
+  echo "Would delete (merged into '$base'):"
+  for b in $targets; do echo "  $b"; done
+  exit 0
+fi
+
+for b in $targets; do git branch -d "$b"; done

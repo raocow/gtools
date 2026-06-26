@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# git-sync — rebase the current branch onto the latest base, then push it.
+#
+# Does: git fetch  →  git rebase origin/<base>  →  git push --force-with-lease
+# (force-with-lease because a rebase rewrites history; it still refuses to
+# clobber remote commits you haven't pulled).
+#
+# Usage:
+#   git sync           rebase onto origin's default branch, then push
+#   git sync -b NAME   rebase onto origin/NAME instead
+#   git sync -n        dry run — print the steps, change nothing
+#   git sync -h        show this help
+#
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+git sync — rebase the current branch onto the latest base, then push it.
+
+Does: git fetch → git rebase origin/<base> → git push --force-with-lease
+
+Usage:
+  git sync           rebase onto origin's default branch, then push
+  git sync -b NAME   rebase onto origin/NAME instead
+  git sync -n        dry run — print the steps, change nothing
+  git sync -h        show this help
+EOF
+}
+
+dry=0
+base=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run) dry=1 ;;
+    -b|--base) shift; base="${1:-}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "git sync: unknown option '$1' (try -h)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "git sync: not inside a git repository" >&2; exit 1; }
+
+current=$(git rev-parse --abbrev-ref HEAD)
+[ "$current" != "HEAD" ] || {
+  echo "git sync: detached HEAD — check out a branch first" >&2; exit 1; }
+
+# Base = origin's default branch unless told otherwise.
+if [ -z "$base" ]; then
+  base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's#^origin/##' || true)
+  [ -n "$base" ] || base=main
+fi
+
+# Don't rebase the base branch onto itself / push to a protected branch.
+[ "$current" != "$base" ] || {
+  echo "git sync: you're on '$base' — switch to a feature branch first" >&2; exit 1; }
+
+# A rebase needs a clean tree; bail early with a clear message.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "git sync: you have uncommitted changes — commit or stash them first" >&2
+  exit 1
+fi
+
+if [ "$dry" = 1 ]; then
+  echo "Would run, on branch '$current':"
+  echo "  git fetch origin --prune"
+  echo "  git rebase origin/$base"
+  echo "  git push --force-with-lease --force-if-includes"
+  exit 0
+fi
+
+git fetch origin --prune
+
+if ! git rebase "origin/$base"; then
+  echo "git sync: rebase hit conflicts. Resolve them, then run:" >&2
+  echo "    git rebase --continue   (or: git rebase --abort)" >&2
+  echo "    git push --force-with-lease" >&2
+  exit 1
+fi
+
+# Force-with-lease only makes sense once the branch has an upstream; the first
+# push just sets one.
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git push --force-with-lease --force-if-includes
+else
+  git push -u origin "$current"
+fi
