@@ -29,7 +29,9 @@ Each takes `-h` for help.
 
 - `bash` (works on macOS's bash 3.2)
 - `git`
-- `gh` (GitHub CLI) — only for `git pr`
+- `gh` (GitHub CLI) — only for `git pr`. `install.sh` installs it via Homebrew if
+  missing (and prints manual instructions on other platforms); not fatal, so the
+  other commands install fine without it.
 
 ## Notes
 
