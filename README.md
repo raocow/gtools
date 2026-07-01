@@ -19,7 +19,7 @@ place. Make sure the target dir is on your `PATH`.
 
 | Command | What it does |
 |---|---|
-| `git sweep` | Delete local branches already merged into the base branch. Safe by default: `git branch -d` (refuses anything unmerged). `-f`/`--force` widens it to **every** local branch except base + current and force-deletes with `-D` — clears never-PR'd / squash-merged / unmerged branches too (deletes unmerged work; preview with `-n`). `-n` dry-run, `-b NAME` base. |
+| `git sweep` | Delete local branches already merged into the base branch. Fetches first and compares against the base's **remote tip** (`origin/<base>`), so it works without pulling main and from any branch — a branch merged upstream is swept even if your local main is stale. Safe by default: `git branch -d` (refuses anything unmerged). `-f`/`--force` widens it to **every** local branch except base + current and force-deletes with `-D` — clears never-PR'd / squash-merged / unmerged branches too (deletes unmerged work; preview with `-n`). `-n` dry-run, `-b NAME` base. |
 | `git sync` | Rebase the current branch onto `origin/<default>` and push it: `git fetch → git rebase → git push --force-with-lease`. Guards against running on `main`/dirty trees; stops cleanly on conflicts. `-n` dry-run, `-b NAME` base. |
 | `git pr <n>` | Check out the branch for GitHub PR `#n`. If it's already local, just switch; otherwise fetch it (falls back to `refs/pull/<n>/head` for merged/closed PRs). Needs the GitHub CLI (`gh`). |
 
