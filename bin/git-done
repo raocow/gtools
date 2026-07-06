@@ -4,15 +4,17 @@
 #
 # The bookend to `git pr`: after you've checked out a PR's branch and finished
 # reviewing it, `git done` returns you to the base (origin's default, usually
-# main) and force-deletes the branch you were on.
+# main) and deletes the branch you were on.
 #
-# Uses `git branch -D` (not -d) on purpose: PR branches are typically merged
-# upstream — often squash-merged, which git can't see as an ancestor of the base
-# — so a safe -d would refuse them. -D deletes regardless. That means it will
-# also drop genuinely unmerged work without warning; run -n first if unsure.
+# Safe by default: uses `git branch -d`, which refuses any branch that isn't
+# fully merged — so hopping back to main can't silently drop working code. The
+# catch is squash-merged PR branches: a squash isn't an ancestor of the base, so
+# -d won't see them as merged and will refuse them too. When you know the branch
+# is done, pass --force (`git branch -D`) to delete it regardless.
 #
 # Usage:
-#   git done            switch to the base branch, delete the branch you left
+#   git done            switch to the base branch, delete the branch you left (-d)
+#   git done -f         force-delete with -D (unmerged / squash-merged branches)
 #   git done -b NAME    switch to NAME as the base instead of origin's default
 #   git done -n         dry run — print what it would do, change nothing
 #   git done -h         show this help
@@ -24,14 +26,15 @@ usage() {
 git done — switch back to the base branch and delete the branch you left.
 
 The bookend to `git pr`: after reviewing a checked-out PR branch, return to the
-base (origin's default, usually main) and force-delete the branch you were on.
+base (origin's default, usually main) and delete the branch you were on.
 
-Uses `git branch -D` (not -d): PR branches are usually merged upstream — often
-squash-merged, which a safe -d wouldn't recognize as merged and would refuse.
--D deletes regardless, so it also drops unmerged work without warning.
+Safe by default: `git branch -d` refuses anything not fully merged, so hopping
+back to main can't silently drop working code. Squash-merged branches look
+unmerged to -d and are refused too — use --force (`git branch -D`) for those.
 
 Usage:
-  git done          switch to the base branch, delete the branch you left
+  git done          switch to the base branch, delete the branch you left (-d)
+  git done -f       force-delete with -D (unmerged / squash-merged branches)
   git done -b NAME  use NAME as the base instead of origin's default
   git done -n       dry run — print what it would do, change nothing
   git done -h       show this help
@@ -39,10 +42,12 @@ EOF
 }
 
 dry=0
+force=0
 base=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -n|--dry-run) dry=1 ;;
+    -f|--force) force=1 ;;
     -b|--base) shift; base="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "git done: unknown option '$1' (try -h)" >&2; exit 2 ;;
@@ -71,12 +76,23 @@ git show-ref --verify --quiet "refs/heads/$base" \
   || git show-ref --verify --quiet "refs/remotes/origin/$base" || {
   echo "git done: base '$base' not found locally or on origin" >&2; exit 1; }
 
+flag="-d"
+[ "$force" = 1 ] && flag="-D"
+
 if [ "$dry" = 1 ]; then
   echo "Would run:"
   echo "  git switch $base"
-  echo "  git branch -D $current"
+  echo "  git branch $flag $current"
   exit 0
 fi
 
 git switch "$base"
-git branch -D "$current"
+
+# Safe -d refuses unmerged (incl. squash-merged) branches — catch that and point
+# at --force rather than letting set -e abort on a bare git error.
+if ! git branch "$flag" "$current"; then
+  echo "git done: '$current' isn't fully merged into '$base', so it was kept." >&2
+  echo "  If you're sure it's done (e.g. squash-merged), delete it with:" >&2
+  echo "      git branch -D $current" >&2
+  exit 1
+fi
