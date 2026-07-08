@@ -126,7 +126,7 @@ if [ -z "$targets" ]; then
   if [ "$force" = 1 ]; then
     echo "git sweep: no other local branches to delete."
   else
-    echo "git sweep: nothing merged into '$base' to delete."
+    echo "git sweep: nothing merged into '$mergeref' to delete."
   fi
   exit 0
 fi
@@ -137,7 +137,7 @@ if [ "$dry" = 1 ]; then
     [ "$current" != "$base" ] && except="$except and '$current'"
     echo "Would FORCE-delete (every local branch except $except):"
   else
-    echo "Would delete (merged into '$base'):"
+    echo "Would delete (merged into '$mergeref'):"
   fi
   for b in $targets; do echo "  $b"; done
   exit 0
