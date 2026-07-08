@@ -3,6 +3,16 @@
 Personal custom `git` subcommands. Git treats any executable named `git-<name>`
 on your `PATH` as `git <name>`, so these work like built-ins once installed.
 
+You're gonna need the github CLI for git pr so install that before installing this.
+These commands are essentially git shortcuts to speed up your dev cycle. I'm sure 
+there are safety reasons for why these commands don't already exists, but I feel pretty
+safe using them. `git sweep` is a lot quicker than asking an LLM to clear out every
+merged branch. `git pr` + `git done` is a nice way to checkout and test your coworker's code
+and delete it afterward.
+
+In that sense, it's probably not too useful for individual devs who don't use PRs, but
+anyone that works with a team, I recommend.
+
 ## Install
 
 ```bash
