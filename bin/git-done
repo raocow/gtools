@@ -13,6 +13,8 @@
 # -d won't see them as merged and will refuse them too. When you know the branch
 # is done, pass --force (`git branch -D`) to delete it regardless.
 #
+# On a detached HEAD there's nothing to delete, so it just switches back to base.
+#
 # Usage:
 #   git done            switch to the base branch, delete the branch you left (-d)
 #   git done -f         force-delete with -D (unmerged / squash-merged branches)
@@ -60,9 +62,11 @@ done
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "git done: not inside a git repository" >&2; exit 1; }
 
+# On a detached HEAD there's no branch to delete — we still switch back to base,
+# just skip the deletion at the end.
+detached=0
 current=$(git rev-parse --abbrev-ref HEAD)
-[ "$current" != "HEAD" ] || {
-  echo "git done: detached HEAD — check out a branch first" >&2; exit 1; }
+[ "$current" != "HEAD" ] || detached=1
 
 # Base = origin's default branch unless told otherwise (matches git sync/sweep).
 if [ -z "$base" ]; then
@@ -85,7 +89,11 @@ if [ "$dry" = 1 ]; then
   echo "Would run:"
   echo "  git switch $base"
   echo "  git fetch origin --prune  &&  git merge --ff-only origin/$base"
-  echo "  git branch $flag $current"
+  if [ "$detached" = 1 ]; then
+    echo "  (detached HEAD — no branch to delete)"
+  else
+    echo "  git branch $flag $current"
+  fi
   exit 0
 fi
 
@@ -99,6 +107,11 @@ if git show-ref --verify --quiet "refs/remotes/origin/$base"; then
   git fetch --quiet origin --prune 2>/dev/null || true
   git merge --ff-only "origin/$base" >/dev/null 2>&1 \
     || echo "git done: couldn't fast-forward '$base' (diverged or offline) — continuing." >&2
+fi
+
+if [ "$detached" = 1 ]; then
+  echo "git done: was on a detached HEAD — switched to '$base', no branch to delete."
+  exit 0
 fi
 
 # Safe -d refuses unmerged (incl. squash-merged) branches — catch that and point

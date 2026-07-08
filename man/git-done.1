@@ -33,6 +33,11 @@ silently drop working code. Note that squash-merged branches look unmerged (a
 squash is not an ancestor of the base) and are refused too; use
 .B \-\-force
 for those.
+.PP
+On a detached HEAD there is no branch to delete, so
+.B git done
+just switches back to the base (and fast-forwards it), then reports that there
+was nothing to delete.
 .SH OPTIONS
 .TP
 .BR \-f ", " \-\-force
@@ -65,8 +70,8 @@ Force-delete the current branch (e.g. after it was squash-merged).
 .B git done \-n
 Preview the actions without running them.
 .SH EXIT STATUS
-Exits nonzero if not in a git repository, on a detached HEAD, already on the
-base branch, the base is not found, or the branch is refused by a safe delete.
+Exits nonzero if not in a git repository, already on the base branch, the base
+is not found, or the branch is refused by a safe delete.
 .SH SEE ALSO
 .BR git-pr (1),
 .BR git-sync (1),
