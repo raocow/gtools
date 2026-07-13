@@ -24,6 +24,16 @@
 #
 set -euo pipefail
 
+# Colorized step output on a terminal (respects NO_COLOR). Each phase — switch,
+# fast-forward, delete — prints one clear line instead of git's raw chatter.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
 usage() {
   cat <<'EOF'
 git done — switch back to the base branch and delete the branch you left.
@@ -97,28 +107,42 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
-git switch "$base"
+# --- 1) switch to base (quietly; we narrate it ourselves) ---
+git switch --quiet "$base"
+step "switched to $base"
 
-# Bring the base up to date so the just-merged PR is present locally — both so
-# you land on current main and so the -d merged-check below sees it. Best effort:
-# fast-forward only (never a merge commit); skip with a note if offline or the
-# local base has diverged from origin.
+# --- 2) fast-forward base to origin so you land on current main. Best effort:
+# fast-forward only (never a merge commit); note it if offline or diverged.
 if git show-ref --verify --quiet "refs/remotes/origin/$base"; then
   git fetch --quiet origin --prune 2>/dev/null || true
-  git merge --ff-only "origin/$base" >/dev/null 2>&1 \
-    || echo "git done: couldn't fast-forward '$base' (diverged or offline) — continuing." >&2
+  behind=$(git rev-list --count "$base..origin/$base" 2>/dev/null || echo 0)
+  if [ "$behind" -gt 0 ]; then
+    if [ "$behind" = 1 ]; then noun=commit; else noun=commits; fi
+    if git merge --ff-only "origin/$base" >/dev/null 2>&1; then
+      step "fast-forwarded $base to origin/$base ${_dim}(+$behind $noun)${_off}"
+    else
+      warn "couldn't fast-forward $base (diverged or offline) — left as is"
+    fi
+  else
+    step "$base already up to date with origin/$base"
+  fi
 fi
 
 if [ "$detached" = 1 ]; then
-  echo "git done: was on a detached HEAD — switched to '$base', no branch to delete."
+  step "was on a detached HEAD — nothing to delete"
   exit 0
 fi
 
-# Safe -d refuses unmerged (incl. squash-merged) branches — catch that and point
-# at --force rather than letting set -e abort on a bare git error.
-if ! git branch "$flag" "$current"; then
-  echo "git done: '$current' isn't fully merged into '$base', so it was kept." >&2
-  echo "  If you're sure it's done (e.g. squash-merged), delete it with:" >&2
-  echo "      git branch -D $current" >&2
+# --- 3) delete the branch you left. Suppress git's verbose -d warning (it's
+# noisy about "merged upstream but not to HEAD") and print one clear line. Safe
+# -d refuses unmerged (incl. squash-merged) branches — catch that and point at
+# --force rather than letting set -e abort on a bare git error.
+sha=$(git rev-parse --short "$current" 2>/dev/null || echo '?')
+if git branch "$flag" "$current" >/dev/null 2>&1; then
+  step "deleted $current ${_dim}(was $sha)${_off}"
+else
+  warn "kept $current — not fully merged into $base"
+  printf '  %sif you are sure it is done (e.g. squash-merged): git branch -D %s%s\n' \
+    "$_dim" "$current" "$_off" >&2
   exit 1
 fi
