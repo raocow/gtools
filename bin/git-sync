@@ -24,6 +24,16 @@
 #
 set -euo pipefail
 
+# Colorized step output on a terminal (respects NO_COLOR). Mirrored across the
+# git-* tools so they narrate their actions in one consistent format.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
 usage() {
   cat <<'EOF'
 git sync — rebase onto the latest base and push. `--all` does the whole repo.
@@ -93,7 +103,7 @@ fi
 _report() {
   label="$1"; shift
   [ "$#" -eq 0 ] && return 0
-  echo "$label:"
+  printf '%s%s:%s\n' "$_dim" "$label" "$_off"
   for b in "$@"; do echo "  $b"; done
 }
 
@@ -169,7 +179,7 @@ sync_all() {
   _report "Skipped"                     ${skipped[@]+"${skipped[@]}"}
   if [ "${#conflicts[@]}" -gt 0 ]; then
     echo
-    echo "For each conflict: git checkout <branch> && git sync" >&2
+    warn "for each conflict: git checkout <branch> && git sync"
   fi
 }
 
@@ -196,17 +206,16 @@ if [ "$current" = "$base" ]; then
     echo "  (no push — syncing the base only updates it locally)"
     exit 0
   fi
-  git fetch origin --prune
+  git fetch --quiet origin --prune
   if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$base")" ]; then
-    echo "git sync: '$base' is already up to date with origin/$base."
+    step "$base already up to date with origin/$base"
     exit 0
   fi
-  if ! git rebase "origin/$base"; then
-    echo "git sync: rebase hit conflicts pulling '$base'. Resolve them, then:" >&2
-    echo "    git rebase --continue   (or: git rebase --abort)" >&2
+  if ! git rebase "origin/$base" >/dev/null 2>&1; then
+    warn "rebase hit conflicts pulling $base — resolve (git status), then: git rebase --continue (or --abort)"
     exit 1
   fi
-  echo "git sync: '$base' synced with origin/$base (local only; not pushed)."
+  step "pulled $base ${_dim}(rebased onto origin/$base, local only — not pushed)${_off}"
   exit 0
 fi
 
@@ -218,19 +227,25 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
-git fetch origin --prune
+git fetch --quiet origin --prune
 
-if ! git rebase "origin/$base"; then
-  echo "git sync: rebase hit conflicts. Resolve them, then run:" >&2
-  echo "    git rebase --continue   (or: git rebase --abort)" >&2
-  echo "    git push --force-with-lease" >&2
+if ! git rebase "origin/$base" >/dev/null 2>&1; then
+  warn "rebase hit conflicts — resolve (git status), then: git rebase --continue (or --abort), then git push --force-with-lease"
   exit 1
 fi
 
 # Force-with-lease only makes sense once the branch has an upstream; the first
 # push just sets one.
 if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-  git push --force-with-lease --force-if-includes
+  if git push --force-with-lease --force-if-includes >/dev/null 2>&1; then
+    step "synced $current ${_dim}(rebased onto origin/$base, pushed)${_off}"
+  else
+    warn "rebased, but push was refused (protected branch or lost lease) — push by hand"; exit 1
+  fi
 else
-  git push -u origin "$current"
+  if git push -u origin "$current" >/dev/null 2>&1; then
+    step "synced $current ${_dim}(rebased onto origin/$base, pushed new branch)${_off}"
+  else
+    warn "rebased, but push failed — push by hand"; exit 1
+  fi
 fi

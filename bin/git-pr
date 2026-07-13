@@ -20,6 +20,16 @@
 #
 set -euo pipefail
 
+# Colorized step output on a terminal (respects NO_COLOR). Mirrored across the
+# git-* tools so they narrate their actions in one consistent format.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
 usage() {
   cat <<'EOF'
 git pr — check out the branch for a GitHub PR by number.
@@ -52,7 +62,8 @@ stamped=$(git config --get-regexp '^branch\..*\.gtools-pr$' 2>/dev/null \
   | awk -v n="$num" '$2 == n { print $1; exit }' \
   | sed -E 's/^branch\.(.*)\.gtools-pr$/\1/') || true
 if [ -n "${stamped:-}" ] && git show-ref --verify --quiet "refs/heads/$stamped"; then
-  git switch "$stamped"
+  git switch --quiet "$stamped"
+  step "switched to $stamped ${_dim}(PR #$num, offline)${_off}"
   exit 0
 fi
 
@@ -64,16 +75,20 @@ branch=$(gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null) || {
 [ -n "$branch" ] || { echo "git pr: PR #$num has no head branch" >&2; exit 1; }
 
 if git show-ref --verify --quiet "refs/heads/$branch"; then
-  git switch "$branch"  # already local → just switch (no fetch)
+  git switch --quiet "$branch"  # already local → just switch (no fetch)
+  step "switched to $branch ${_dim}(PR #$num)${_off}"
 else
-  echo "git pr: fetching PR #$num ($branch)…"
+  step "fetching PR #$num ${_dim}($branch)${_off}"
   # Open PRs: gh checks out the head branch and sets tracking. Merged/closed PRs
   # whose branch was deleted from origin: fall back to refs/pull/<num>/head,
   # which GitHub keeps around, into a local branch of the same name.
-  if ! gh pr checkout "$num" 2>/dev/null; then
-    echo "git pr: head branch is gone from origin; using refs/pull/$num/head…"
-    git fetch origin "refs/pull/$num/head:$branch"
-    git switch "$branch"
+  if gh pr checkout "$num" >/dev/null 2>&1; then
+    step "switched to $branch ${_dim}(PR #$num)${_off}"
+  else
+    warn "head branch gone from origin — using refs/pull/$num/head"
+    git fetch --quiet origin "refs/pull/$num/head:$branch"
+    git switch --quiet "$branch"
+    step "switched to $branch ${_dim}(PR #$num)${_off}"
   fi
 fi
 

@@ -27,6 +27,16 @@
 #
 set -euo pipefail
 
+# Colorized step output on a terminal (respects NO_COLOR). Mirrored across the
+# git-* tools so they narrate their actions in one consistent format.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
 usage() {
   cat <<'EOF'
 git sweep — delete local branches already merged into the base branch.
@@ -143,9 +153,21 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
+# Delete quietly and narrate each removal in the shared format (one line per
+# branch) instead of leaking git's raw "Deleted branch ..." output.
+_del() {  # _del <branch>
+  local b="$1" sha
+  sha=$(git rev-parse --short "$b" 2>/dev/null || echo '?')
+  if git branch -D "$b" >/dev/null 2>&1; then
+    step "deleted $b ${_dim}(was $sha)${_off}"
+  else
+    warn "couldn't delete $b"
+  fi
+}
+
 if [ "$force" = 1 ]; then
   # Force sweep: delete every targeted branch outright (may include unmerged work).
-  for b in $targets; do git branch -D "$b"; done
+  for b in $targets; do _del "$b"; done
 else
   # Safe sweep: each target is already an ancestor of $mergeref (from --merged),
   # so deleting it can't drop unmerged work. We re-verify against $mergeref and
@@ -154,9 +176,9 @@ else
   # upstream when your local base is stale — the very case sweep exists to handle.
   for b in $targets; do
     if git merge-base --is-ancestor "$b" "$mergeref"; then
-      git branch -D "$b"
+      _del "$b"
     else
-      echo "git sweep: skipping '$b' — not merged into '$mergeref'." >&2
+      warn "skipped $b — not merged into $mergeref"
     fi
   done
 fi
