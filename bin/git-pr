@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# git-pr — check out the branch for a GitHub PR by number.
+# git-pr — check out the branch for a GitHub PR by number, always up to date.
 #
-# One flagless command: given a PR number, switch to its branch if you already
-# have it, otherwise fetch it first and switch.
+# One flagless command: `git pr <n>` runs `gh pr checkout`, which creates the
+# PR's branch or fast-forwards an existing local branch to the PR's latest — so
+# you're never left on a stale copy. Branches are stamped with their PR number
+# (`branch.<name>.gtools-pr <n>`) so that if GitHub is unreachable, `git pr <n>`
+# can still fall back to switching to the branch you already have (not updated).
 #
-# It resolves the PR number → branch offline when it can: branches checked out
-# by a previous `git pr` are stamped with `branch.<name>.gtools-pr <n>`, so a
-# repeat `git pr <n>` switches instantly with no network. Only the first time
-# (or for a branch you got some other way) does it ask `gh pr view` for the
-# name — and it fetches via `gh` only when the branch isn't already local.
+# For a merged/closed PR whose head branch was deleted from origin, it falls
+# back to `refs/pull/<n>/head`, which GitHub keeps around.
 #
 # (Named `git pr`, not `git switch`: git always prefers its built-in `switch`
 # over a script, so a custom `git-switch` could never run.)
 #
 # Usage:
-#   git pr 923         check out the head branch of PR #923
+#   git pr 923         check out PR #923's branch (updating it to the latest)
 #   git pr -h          show this help
 #
 set -euo pipefail
@@ -32,15 +32,14 @@ warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
 
 usage() {
   cat <<'EOF'
-git pr — check out the branch for a GitHub PR by number.
+git pr — check out the branch for a GitHub PR by number, always up to date.
 
-Switch to the PR's branch if it's already local, otherwise fetch it first and
-switch. Branches are stamped with their PR number, so a repeat `git pr <n>` is
-offline; the GitHub CLI (gh) is used only to resolve/fetch a branch you don't
-already have.
+Runs `gh pr checkout`: creates the PR's branch or fast-forwards an existing one
+to the PR's latest. If GitHub is unreachable, falls back to the local branch you
+already have (a repeat is stamped with the PR number). Requires the GitHub CLI.
 
 Usage:
-  git pr 923    check out the head branch of PR #923
+  git pr 923    check out PR #923's branch (updating it to the latest)
   git pr -h     show this help
 EOF
 }
@@ -55,43 +54,44 @@ echo "$num" | grep -qE '^[0-9]+$' || {
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "git pr: not inside a git repository" >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || {
+  echo "git pr: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
 
-# 1) Offline fast path — a local branch already stamped with this PR number.
-#    Switch straight to it, no `gh`, no network.
-stamped=$(git config --get-regexp '^branch\..*\.gtools-pr$' 2>/dev/null \
-  | awk -v n="$num" '$2 == n { print $1; exit }' \
-  | sed -E 's/^branch\.(.*)\.gtools-pr$/\1/') || true
-if [ -n "${stamped:-}" ] && git show-ref --verify --quiet "refs/heads/$stamped"; then
-  git switch --quiet "$stamped"
-  step "switched to $stamped ${_dim}(PR #$num, offline)${_off}"
+# 1) Preferred path: let gh create the branch or fast-forward an existing one to
+#    the PR's latest, so you're never on a stale copy. gh leaves us on the branch.
+if gh pr checkout "$num" >/dev/null 2>&1; then
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  git config "branch.$branch.gtools-pr" "$num" 2>/dev/null || true
+  step "switched to $branch ${_dim}(PR #$num, up to date)${_off}"
   exit 0
 fi
 
-# 2) Not stamped — ask gh for the head branch name.
-command -v gh >/dev/null 2>&1 || {
-  echo "git pr: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
-branch=$(gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null) || {
-  echo "git pr: couldn't find PR #$num in this repo" >&2; exit 1; }
-[ -n "$branch" ] || { echo "git pr: PR #$num has no head branch" >&2; exit 1; }
+# gh pr checkout failed. Resolve the head branch name to tell offline apart from
+# a deleted-branch (merged/closed) PR.
+branch=$(gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null || true)
 
-if git show-ref --verify --quiet "refs/heads/$branch"; then
-  git switch --quiet "$branch"  # already local → just switch (no fetch)
-  step "switched to $branch ${_dim}(PR #$num)${_off}"
-else
-  step "fetching PR #$num ${_dim}($branch)${_off}"
-  # Open PRs: gh checks out the head branch and sets tracking. Merged/closed PRs
-  # whose branch was deleted from origin: fall back to refs/pull/<num>/head,
-  # which GitHub keeps around, into a local branch of the same name.
-  if gh pr checkout "$num" >/dev/null 2>&1; then
-    step "switched to $branch ${_dim}(PR #$num)${_off}"
-  else
-    warn "head branch gone from origin — using refs/pull/$num/head"
-    git fetch --quiet origin "refs/pull/$num/head:$branch"
-    git switch --quiet "$branch"
-    step "switched to $branch ${_dim}(PR #$num)${_off}"
+# 2) Couldn't reach GitHub — fall back to a local branch stamped for this PR
+#    (switch to it as-is; it isn't updated).
+if [ -z "$branch" ]; then
+  stamped=$(git config --get-regexp '^branch\..*\.gtools-pr$' 2>/dev/null \
+    | awk -v n="$num" '$2 == n { print $1; exit }' \
+    | sed -E 's/^branch\.(.*)\.gtools-pr$/\1/') || true
+  if [ -n "${stamped:-}" ] && git show-ref --verify --quiet "refs/heads/$stamped"; then
+    git switch --quiet "$stamped"
+    warn "couldn't reach GitHub — on existing $stamped (not updated)"
+    exit 0
   fi
+  echo "git pr: couldn't find PR #$num (offline, or not a PR in this repo)" >&2; exit 1
 fi
 
-# Stamp the branch with its PR number so the next `git pr $num` resolves it
-# offline, without a `gh` round-trip.
-git config "branch.$branch.gtools-pr" "$num" 2>/dev/null || true
+# 3) Online but checkout failed — usually a merged/closed PR whose head branch
+#    was deleted from origin. Use the ref GitHub keeps around.
+warn "head branch gone from origin — using refs/pull/$num/head"
+if git fetch --quiet origin "refs/pull/$num/head:$branch" 2>/dev/null; then
+  git switch --quiet "$branch"
+  git config "branch.$branch.gtools-pr" "$num" 2>/dev/null || true
+  step "switched to $branch ${_dim}(PR #$num)${_off}"
+else
+  echo "git pr: couldn't check out PR #$num — '$branch' may have diverged; resolve by hand" >&2
+  exit 1
+fi

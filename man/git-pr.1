@@ -8,24 +8,23 @@ git-pr \- check out the branch for a GitHub pull request by number
 .B git pr
 [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
-Check out the head branch of GitHub pull request #\fINUMBER\fR. If that branch
-already exists locally,
-.B git pr
-just switches to it; otherwise it fetches it first. For merged or closed PRs
+Check out the head branch of GitHub pull request #\fINUMBER\fR, always up to
+date. It runs
+.BR "gh pr checkout" ,
+which creates the branch or fast-forwards an existing local branch to the PR's
+latest \(em so you are never left on a stale copy. For merged or closed PRs
 whose branch has been deleted from
 .IR origin ,
 it falls back to
 .IR refs/pull/<NUMBER>/head ,
 which GitHub keeps around, into a local branch of the same name.
 .PP
-Branches checked out this way are stamped with their PR number
+Branches are stamped with their PR number
 .RB ( "branch.<name>.gtools-pr" ),
-so a later
+so if the GitHub CLI cannot reach GitHub,
 .B git pr
-for the same number resolves the branch offline and switches to it with no
-.B gh
-call. The GitHub CLI is consulted only to resolve or fetch a branch you do not
-already have.
+falls back to switching to the stamped local branch as-is (without updating it),
+letting it still work offline.
 .PP
 Named
 .I git pr
@@ -44,8 +43,8 @@ Show usage and exit.
 Requires the GitHub CLI
 .RB ( gh ),
 authenticated for the repository
-.RB ( "gh auth login" ),
-except when switching to an already-stamped branch, which needs no network.
+.RB ( "gh auth login" ). Only the offline fallback (switching to an
+already-stamped branch) works without it.
 .SH EXAMPLES
 .TP
 .B git pr 923
