@@ -30,6 +30,16 @@
 #
 set -euo pipefail
 
+# Colorized step output on a terminal (respects NO_COLOR). Mirrored across the
+# git-* tools so they narrate their actions in one consistent format.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
 usage() {
   cat <<'EOF'
 git wsweep — remove worktrees whose HEAD is already merged into the base branch.
@@ -172,9 +182,9 @@ for i in "${!targets[@]}"; do
     ok=1; git worktree remove "${targets[$i]}" 2>/dev/null || ok=0
   fi
   if [ "$ok" = 1 ]; then
-    echo "removed  ${labels[$i]}"
+    step "removed ${labels[$i]}"
   else
-    echo "git wsweep: could not remove '${targets[$i]}' (uncommitted changes? use -f)" >&2
+    warn "couldn't remove ${targets[$i]} — uncommitted changes? use -f"
   fi
 done
 git worktree prune
