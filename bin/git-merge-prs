@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+#
+# git-merge-prs — merge every mergeable open PR, rebasing branches that need
+# it, skipping anything that needs a human, and listing what got skipped.
+#
+# Unlike the rest of gtools, this touches shared remote state (it merges PRs on
+# GitHub), so it is SAFE BY DEFAULT: it only prints a plan and does nothing
+# until you pass --yes. There is no --force — anything blocked by branch
+# protection (required reviews/checks) is always left alone.
+#
+# Order: it computes which open PRs touch overlapping files and processes the
+# least-entangled ones first (fewest other PRs sharing a changed file), so a
+# PR that's easy to land doesn't sit behind one that needs a rebase. This is a
+# static, one-time ordering from each PR's changed-file list — no LLM, no
+# guessing, just a conflict-adjacency count.
+#
+# For each PR, in that order:
+#   - mergeStateStatus CLEAN/UNSTABLE  → merge it directly (gh pr merge).
+#   - BEHIND/DIRTY                     → rebase the branch onto its base in a
+#                                         scratch worktree (never touches your
+#                                         current branch/worktree) and push; if
+#                                         the rebase itself hits conflicts,
+#                                         abort it and skip — that needs a human.
+#   - BLOCKED (required checks/reviews) → skip; never bypassed.
+#   - draft                            → skip.
+# Skipped PRs are listed at the end with why. Merging one PR can change the
+# status of the ones after it (e.g. newly BEHIND) — each PR's status is
+# re-checked right before it's handled, not just at the start.
+#
+# The merge method (merge/squash/rebase) defaults to the repo's own default
+# (`gh repo view`'s viewerDefaultMergeMethod), or --method to override. Branches
+# are never auto-deleted after merge — run `git sweep` afterward for that.
+#
+# Usage:
+#   git merge-prs             dry run: show the order and what would happen
+#   git merge-prs --yes       actually merge (-y)
+#   git merge-prs --mine      only consider PRs you authored
+#   git merge-prs --method squash|merge|rebase   override the merge method
+#   git merge-prs -h          show this help
+#
+set -euo pipefail
+
+# Colorized step output on a terminal (respects NO_COLOR). Mirrored across the
+# git-* tools so they narrate their actions in one consistent format.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _ok=$'\033[32m'; _warn=$'\033[33m'; _dim=$'\033[2m'; _off=$'\033[0m'
+else
+  _ok=''; _warn=''; _dim=''; _off=''
+fi
+step() { printf '%s✓%s %s\n' "$_ok" "$_off" "$1"; }
+warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
+
+usage() {
+  cat <<'EOF'
+git merge-prs — merge every mergeable open PR, rebasing what needs it,
+skipping what needs a human, and listing the skips.
+
+Safe by default: prints a plan and touches nothing until you pass --yes.
+Branch protection (required reviews/checks) is never bypassed.
+
+Processes PRs in an order chosen to minimize conflicts: the least-entangled
+PRs (fewest other open PRs touching the same files) go first. A PR needing a
+rebase gets one, in a scratch worktree that never touches your current
+branch; if the rebase itself conflicts, that PR is skipped for you to resolve
+by hand.
+
+Usage:
+  git merge-prs             dry run: show the order and what would happen
+  git merge-prs --yes       actually merge (-y)
+  git merge-prs --mine      only consider PRs you authored
+  git merge-prs --method squash|merge|rebase   override the merge method
+                            (default: the repo's own default merge method)
+  git merge-prs -h          show this help
+EOF
+}
+
+yes=0
+mine=0
+method=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -y|--yes) yes=1 ;;
+    -n|--dry-run) yes=0 ;;
+    --mine) mine=1 ;;
+    --method) shift; method="${1:-}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "git merge-prs: unknown option '$1' (try -h)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "git merge-prs: not inside a git repository" >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || {
+  echo "git merge-prs: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
+
+[ -n "$method" ] && method="$(printf '%s' "$method" | tr '[:upper:]' '[:lower:]')"
+case "$method" in
+  ""|merge|squash|rebase) ;;
+  *) echo "git merge-prs: --method must be merge, squash, or rebase" >&2; exit 2 ;;
+esac
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+files_dir="$tmp/files"
+mkdir -p "$files_dir"
+
+# --- Resolve the merge method: explicit --method, else the repo's own default
+# (gh repo view's viewerDefaultMergeMethod), else squash. ---
+if [ -z "$method" ]; then
+  method="$(gh repo view --json viewerDefaultMergeMethod --jq '.viewerDefaultMergeMethod // ""' 2>/dev/null || true)"
+  method="$(printf '%s' "$method" | tr '[:upper:]' '[:lower:]')"
+  case "$method" in merge|squash|rebase) ;; *) method=squash ;; esac
+fi
+merge_flag="--$method"
+
+# --- Gather open PRs (candidates), skipping drafts up front. ---
+author_args=(); [ "$mine" = 1 ] && author_args=(--author "@me")
+nums="$(gh pr list --state open "${author_args[@]}" --limit 200 --json number --jq '.[].number' 2>/dev/null || true)"
+
+if [ -z "$nums" ]; then
+  echo "git merge-prs: no open PRs$([ "$mine" = 1 ] && echo " authored by you") in this repo."
+  exit 0
+fi
+
+overlap_input="$tmp/overlap_input"
+: > "$overlap_input"
+titles_file="$tmp/titles"
+: > "$titles_file"
+skipped=()   # human-readable "#n title -- reason" lines, built as we go
+
+cand=()
+for num in $nums; do
+  info="$(gh pr view "$num" --json headRefName,baseRefName,isDraft,title \
+    --jq '"\(.headRefName)\t\(.baseRefName)\t\(.isDraft)\t\(.title)"' 2>/dev/null)" || continue
+  head="${info%%$'\t'*}"; rest="${info#*$'\t'}"
+  base="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  draft="${rest%%$'\t'*}"; title="${rest#*$'\t'}"
+  printf '%s\t%s\t%s\n' "$num" "$head" "$base" >> "$tmp/meta"
+  printf '%s\t%s\n' "$num" "$title" >> "$titles_file"
+  if [ "$draft" = "true" ]; then
+    skipped+=("#$num $title -- draft")
+    continue
+  fi
+  gh pr view "$num" --json files --jq '.files[].path' 2>/dev/null | sort -u > "$files_dir/$num"
+  cand+=("$num")
+done
+
+if [ "${#cand[@]}" -eq 0 ]; then
+  echo "git merge-prs: nothing to merge (all open PRs are drafts or unreadable)."
+  if [ "${#skipped[@]}" -gt 0 ]; then
+    echo "Skipped:"; for s in "${skipped[@]}"; do echo "  $s"; done
+  fi
+  exit 0
+fi
+
+# --- Order candidates by conflict-adjacency: for each PR, count how many other
+# candidates share at least one changed file; sort ascending (least-entangled
+# first), tie-break by PR number. ---
+for num in "${cand[@]}"; do
+  ov=0
+  for other in "${cand[@]}"; do
+    [ "$other" = "$num" ] && continue
+    if [ -s "$files_dir/$num" ] && [ -s "$files_dir/$other" ] \
+      && comm -12 "$files_dir/$num" "$files_dir/$other" | grep -q .; then
+      ov=$((ov + 1))
+    fi
+  done
+  printf '%d\t%d\n' "$ov" "$num" >> "$overlap_input"
+done
+order=()
+while IFS=$'\t' read -r _ovnum num; do order+=("$num"); done < <(sort -n -k1,1 -k2,2 "$overlap_input")
+
+title_of() { grep -m1 "^$1"$'\t' "$titles_file" | cut -f2-; }
+meta_of()  { grep -m1 "^$1"$'\t' "$tmp/meta"; }   # num\thead\tbase
+
+# --- Rebase a PR's branch onto its base in a scratch worktree, then push.
+# Never touches the current worktree/branch. Returns 0 on a clean rebase (and
+# leaves it pushed), 1 if the rebase itself needs manual resolution. ---
+rebase_and_push() {
+  local head="$1" base="$2"
+  if git worktree list --porcelain | grep -qF "branch refs/heads/$head"$'\n'; then
+    return 2   # branch is checked out elsewhere — don't touch it
+  fi
+  local wt; wt="$tmp/wt-$head"
+  git fetch --quiet origin "$head" "$base" 2>/dev/null || return 3
+  git worktree add --quiet -B "$head" "$wt" "origin/$head" >/dev/null 2>&1 || return 3
+  local ok=0
+  if (cd "$wt" && git rebase --quiet "origin/$base" >/dev/null 2>&1); then
+    if (cd "$wt" && git push --quiet --force-with-lease "origin" "HEAD:$head" >/dev/null 2>&1); then
+      ok=0
+    else
+      ok=4   # rebased locally but couldn't push (protected ref, race, etc.)
+    fi
+  else
+    (cd "$wt" && git rebase --abort >/dev/null 2>&1) || true
+    ok=1
+  fi
+  git worktree remove --force "$wt" >/dev/null 2>&1 || true
+  return "$ok"
+}
+
+merged=()
+plan=()   # dry-run: "#n title -- action" lines
+
+for num in "${order[@]}"; do
+  title="$(title_of "$num")"
+  meta="$(meta_of "$num")"; head="$(printf '%s' "$meta" | cut -f2)"; base="$(printf '%s' "$meta" | cut -f3)"
+
+  status="$(gh pr view "$num" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo UNKNOWN)"
+
+  case "$status" in
+    CLEAN|UNSTABLE)
+      if [ "$yes" = 0 ]; then
+        plan+=("#$num $title -- merge ($method)"); continue
+      fi
+      if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+        step "merged #$num ${_dim}($title)${_off}"
+        merged+=("#$num $title")
+      else
+        warn "merge failed for #$num — ${err##*$'\n'}"
+        skipped+=("#$num $title -- merge failed: ${err##*$'\n'}")
+      fi
+      ;;
+    BEHIND|DIRTY)
+      if [ "$yes" = 0 ]; then
+        plan+=("#$num $title -- rebase onto $base, then merge"); continue
+      fi
+      rebase_and_push "$head" "$base"; rc=$?
+      case "$rc" in
+        0)
+          if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+            step "rebased + merged #$num ${_dim}($title)${_off}"
+            merged+=("#$num $title")
+          else
+            warn "rebased #$num but merge didn't go through yet — rerun git merge-prs to retry"
+            skipped+=("#$num $title -- rebased and pushed; merge pending (rerun to retry)")
+          fi
+          ;;
+        1) warn "skipping #$num — rebase needs manual conflict resolution"
+           skipped+=("#$num $title -- rebase conflicts, needs manual resolution") ;;
+        2) warn "skipping #$num — branch '$head' is checked out in a worktree"
+           skipped+=("#$num $title -- branch checked out elsewhere") ;;
+        *) warn "skipping #$num — couldn't fetch/rebase '$head'"
+           skipped+=("#$num $title -- couldn't rebase (fetch/push failed)") ;;
+      esac
+      ;;
+    BLOCKED)
+      [ "$yes" = 0 ] && { plan+=("#$num $title -- skip: blocked (required checks/reviews)"); continue; }
+      warn "skipping #$num — blocked by required checks or reviews"
+      skipped+=("#$num $title -- blocked (required checks or reviews)")
+      ;;
+    *)
+      if [ "$yes" = 0 ]; then
+        plan+=("#$num $title -- attempt merge ($status)"); continue
+      fi
+      if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+        step "merged #$num ${_dim}($title)${_off}"
+        merged+=("#$num $title")
+      else
+        warn "skipping #$num — $status: ${err##*$'\n'}"
+        skipped+=("#$num $title -- $status: ${err##*$'\n'}")
+      fi
+      ;;
+  esac
+done
+
+echo
+if [ "$yes" = 0 ]; then
+  echo "Dry run — nothing was changed. Order (least-entangled first):"
+  for p in "${plan[@]}"; do echo "  $p"; done
+  [ "${#skipped[@]}" -gt 0 ] && { echo "Would skip:"; for s in "${skipped[@]}"; do echo "  $s"; done; }
+  echo
+  echo "Run with --yes to actually merge."
+else
+  echo "Merged (${#merged[@]}):"
+  for m in "${merged[@]}"; do echo "  $m"; done
+  if [ "${#skipped[@]}" -gt 0 ]; then
+    echo "Unmergeable / skipped (${#skipped[@]}):"
+    for s in "${skipped[@]}"; do echo "  $s"; done
+  fi
+fi

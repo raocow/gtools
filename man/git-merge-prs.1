@@ -1,0 +1,108 @@
+.TH GIT-MERGE-PRS 1 "2026-07-21" "git-tools" "Git Tools Manual"
+.SH NAME
+git-merge-prs \- merge every mergeable open PR, rebasing what needs it
+.SH SYNOPSIS
+.B git merge-prs
+[\fB\-y\fR|\fB\-\-yes\fR]
+[\fB\-\-mine\fR]
+[\fB\-\-method\fR \fIMETHOD\fR]
+.br
+.B git merge-prs
+[\fB\-n\fR|\fB\-\-dry\-run\fR]
+.br
+.B git merge-prs
+[\fB\-h\fR|\fB\-\-help\fR]
+.SH DESCRIPTION
+Merge every mergeable open pull request in the current repository, rebasing
+branches that need it, skipping anything that needs a human, and listing the
+skips.
+.PP
+Unlike the rest of
+.IR git-tools ,
+this touches shared remote state \(em it merges PRs on GitHub \(em so it is
+.B safe by default:
+it only prints a plan and changes nothing until you pass
+.BR \-\-yes .
+There is no force flag; anything blocked by branch protection (required
+reviews or checks) is always left alone.
+.PP
+PRs are processed in an order chosen to minimize conflicts: for each open PR it
+counts how many other open PRs touch at least one of the same changed files,
+and processes the least-entangled ones first. This is computed once, up front,
+from each PR's changed-file list \(em a plain adjacency count, no LLM involved.
+.PP
+For each PR, in that order:
+.IP \(bu 2
+.B CLEAN
+or
+.BR UNSTABLE :
+merged directly.
+.IP \(bu 2
+.B BEHIND
+or
+.BR DIRTY :
+its branch is rebased onto its base in a scratch
+.B git worktree
+(never touching your current branch or working tree) and pushed with
+.BR "\-\-force\-with\-lease" ,
+then merged. If the rebase itself hits a conflict, it is aborted and the PR is
+skipped \(em that needs a human.
+.IP \(bu 2
+.BR BLOCKED :
+skipped. Required checks or reviews are never bypassed.
+.IP \(bu 2
+Draft PRs: skipped.
+.PP
+Merging one PR can change the status of the ones after it (e.g. a PR that was
+clean can become behind). Each PR's status is re-checked right before it is
+handled, not just once at the start.
+.PP
+The merge method defaults to the repository's own default merge method
+(from
+.BR "gh repo view" ),
+overridable with
+.BR \-\-method .
+Branches are never deleted after merging \(em run
+.BR git-sweep (1)
+afterward for that.
+.SH OPTIONS
+.TP
+.BR \-y ", " \-\-yes
+Actually perform the plan (merge, rebase, skip). Without this, nothing is
+changed.
+.TP
+.BR \-n ", " \-\-dry\-run
+Explicit dry run. This is also the default with no flags at all.
+.TP
+.B \-\-mine
+Only consider PRs authored by you, instead of every open PR in the repo.
+.TP
+.BR \-\-method " " \fIMETHOD\fR
+.IR merge ", " squash ", or " rebase .
+Overrides the repository's default merge method.
+.TP
+.BR \-h ", " \-\-help
+Show usage and exit.
+.SH REQUIREMENTS
+Requires the GitHub CLI
+.RB ( gh ),
+authenticated for the repository
+.RB ( "gh auth login" ).
+.SH EXAMPLES
+.TP
+.B git merge-prs
+Show the merge order and what would happen to each PR. Changes nothing.
+.TP
+.B git merge-prs \-\-yes
+Actually merge everything mergeable, rebasing and skipping as needed.
+.TP
+.B git merge-prs \-\-mine \-\-yes
+Only merge your own open PRs.
+.TP
+.B git merge-prs \-\-method squash \-\-yes
+Merge everything mergeable, squashing regardless of the repo's default.
+.SH SEE ALSO
+.BR git-pr (1),
+.BR git-sweep (1),
+.BR git-sync (1),
+.BR gh (1)
