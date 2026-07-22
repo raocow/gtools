@@ -453,11 +453,13 @@ fi
 # No argument: list your open PRs in this repo (titles by default).
 # ══════════════════════════════════════════════════════════════════════════
 if [ -z "$id" ]; then
+  # Sorted ascending by PR number (gh's own default is newest-first).
   if [ "$notitle" = 1 ]; then
-    gh pr list --author "@me" --state open --limit 100 --json url --jq '.[].url'
+    gh pr list --author "@me" --state open --limit 100 --json number,url \
+      --jq 'sort_by(.number) | .[].url'
   else
-    gh pr list --author "@me" --state open --limit 100 --json url,title \
-      --jq '.[] | "\(.url) -- \(.title)"'
+    gh pr list --author "@me" --state open --limit 100 --json number,url,title \
+      --jq 'sort_by(.number) | .[] | "\(.url) -- \(.title)"'
   fi
   exit 0
 fi

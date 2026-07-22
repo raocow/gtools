@@ -1,26 +1,54 @@
 #!/usr/bin/env bash
 #
-# git-sync — rebase the current branch onto the latest base, then push it.
+# git-sync — rebase branch(es) onto the latest base and push.
 #
-# Does: git fetch  →  git rebase origin/<base>  →  git push --force-with-lease
-# (force-with-lease because a rebase rewrites history; it still refuses to
-# clobber remote commits you haven't pulled).
+#   git sync                    rebase the CURRENT branch onto origin's default,
+#                               then push --force-with-lease
+#   git sync <n|branch|url>...  rebase the named branch(es) — a PR number, a head
+#                               branch, a URL, or an "NNN-MMM" range, all mixable
+#   git sync --all              prune merged branches + rebase/push all the rest [-a]
+#   git sync ... -x <ids...>    exclude branch(es)/PR(s) from any form  [--exclude]
+#   git sync -b NAME            use origin/NAME as the base instead
+#   git sync -n                 dry run — print what it would do, change nothing
 #
-# On the base branch itself it acts like a safe pull instead: git fetch → git
-# rebase origin/<base> (fast-forwards when you're only behind), and never pushes.
+# The positional/exclude grammar mirrors `git pr merge`: targets may be a PR
+# number, a head-branch name, a PR URL, or an "NNN-MMM" range (a token is a range
+# only if it's ENTIRELY digits-hyphen-digits, so "task-42" passes through), all
+# mixable; -x/--exclude takes the same forms (ranges included) and consumes every
+# token after it until the next flag. A numeric or URL target is resolved to its
+# PR's head branch via `gh`; a plain branch name is used as-is with no network,
+# so naming branches directly still works offline.
 #
-# With --all, sweeps EVERY local branch in one pass: prunes the ones already
-# merged into the base, rebases + pushes the rest, and cleanly skips any that
-# hit rebase conflicts (aborting them untouched) so you can resolve those by
-# hand. Squash-merged branches aren't detected as merged, so they get rebased
-# rather than pruned — delete those yourself (or `git sweep -f`).
+# On the base branch — or when a named target IS the base — it acts as a safe
+# pull: fetch → rebase origin/<base> (fast-forwards when only behind), never a
+# push (you don't force-push the base).
+#
+# When a rebase cannot be completed automatically it reacts exactly like
+# `git pr merge`: it ABORTS the rebase (the branch is left untouched, never half
+# rebased), skips that branch, and lists it at the end as needing manual
+# resolution — it never drops you into a conflicted rebase and never fails the
+# whole run. Resolve one by hand with:
+#     git checkout <branch> && git rebase origin/<base>
+#
+# force-with-lease is used for the push (a rebase rewrites history; the lease
+# still refuses to clobber remote commits you haven't pulled). A branch you name
+# explicitly gets its remote created on first push; the --all sweep never creates
+# a remote for a purely-local branch (it reports those as rebased-local-only).
+# Squash-merged branches aren't detected as merged, so --all rebases rather than
+# prunes them — delete those yourself (or `git sweep -f`).
+#
+# (There is no --method: unlike `git pr merge`, sync only ever rebases — there's
+# no merge-commit/squash choice to make.)
 #
 # Usage:
-#   git sync            rebase the current branch onto origin's default, push
-#   git sync --all      prune merged branches + rebase/push all the rest
-#   git sync -b NAME    use origin/NAME as the base instead
-#   git sync -n         dry run — print what it would do, change nothing
-#   git sync -h         show this help
+#   git sync                        rebase the current branch onto origin's default, push
+#                                   (on the base branch: pull it — fetch + rebase, no push)
+#   git sync <n|branch|range>...    rebase the given branch(es); "824-830" is a range
+#   git sync --all                  prune merged branches + rebase/push all the rest (-a)
+#   git sync ... -x <ids...>        exclude branch(es)/PR(s) (--exclude; also takes ranges)
+#   git sync -b NAME                use origin/NAME as the base instead
+#   git sync -n                     dry run — print what it would do, change nothing
+#   git sync -h                     show this help
 #
 set -euo pipefail
 
@@ -36,44 +64,56 @@ warn() { printf '%s!%s %s\n' "$_warn" "$_off" "$1" >&2; }
 
 usage() {
   cat <<'EOF'
-git sync — rebase onto the latest base and push. `--all` does the whole repo.
+git sync — rebase branch(es) onto the latest base and push.
 
-Single branch (default): git fetch → git rebase origin/<base> → git push
-  --force-with-lease.
+  git sync                    rebase the CURRENT branch onto origin's default,
+                              then push --force-with-lease
+  git sync <n|branch|url>...  rebase the named branch(es): a PR number, a head
+                              branch, a URL, or an "NNN-MMM" range — all mixable
+  git sync --all              prune merged branches + rebase/push all the rest (-a)
+  git sync ... -x <ids...>    exclude branch(es)/PR(s) from any form (--exclude;
+                              also takes ranges — everything after -x is excluded
+                              until the next flag)
+  git sync -b NAME            use origin/NAME as the base instead
+  git sync -n                 dry run — print what it would do, change nothing
+  git sync -h                 show this help
 
---all: fetch, fast-forward local <base>, then for every other local branch —
-  delete it if it's already merged into origin/<base>, else rebase it onto
-  origin/<base> and push. Branches that hit rebase conflicts are aborted
-  untouched and listed for you to sync by hand. Never-pushed branches are
-  rebased locally but not pushed. Squash-merged branches look unmerged, so they
-  get rebased, not pruned.
+Targets mirror `git pr merge`: a numeric/URL target is resolved to its PR's head
+branch via `gh`; a plain branch name is used as-is (offline-friendly).
 
-On the base branch: acts as a safe pull — git fetch → git rebase origin/<base>
-  (fast-forwards when only behind), no push.
-
-Usage:
-  git sync            rebase the current branch onto origin's default, then push
-                      (on the base branch: pull it — fetch + rebase, no push)
-  git sync --all      prune merged branches + rebase/push all the rest (-a)
-  git sync -b NAME    use origin/NAME as the base instead
-  git sync -n         dry run — print what it would do, change nothing
-  git sync -h         show this help
+On the base branch (or a target that IS the base) it acts as a safe pull: fetch +
+rebase, no push. When a rebase can't complete automatically it reacts like
+`git pr merge` — it aborts the rebase, skips that branch, and lists it at the end
+as needing manual resolution (never a half-finished rebase, never a failed run).
+Resolve one by hand with:  git checkout <branch> && git rebase origin/<base>
 EOF
 }
 
 dry=0
 all=0
 base=""
+raw_targets=()   # positional args before -x: ids and/or "NNN-MMM" ranges
+raw_excludes=()  # positional args after -x/--exclude
+in_exclude=0     # once -x is seen, bare tokens go to raw_excludes until another flag
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    -n|--dry-run) dry=1 ;;
-    -a|--all) all=1 ;;
-    -b|--base) shift; base="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "git sync: unknown option '$1' (try -h)" >&2; exit 2 ;;
+    -n|--dry-run) dry=1; in_exclude=0 ;;
+    -a|--all) all=1; in_exclude=0 ;;
+    -b|--base) shift; base="${1:-}"; in_exclude=0 ;;
+    -x|--exclude) in_exclude=1 ;;
+    -*) echo "git sync: unknown option '$1' (try -h)" >&2; exit 2 ;;
+    *)
+      if [ "$in_exclude" = 1 ]; then raw_excludes+=("$1"); else raw_targets+=("$1"); fi
+      ;;
   esac
   shift
 done
+
+if [ "$all" = 1 ] && [ "${#raw_targets[@]}" -gt 0 ]; then
+  echo "git sync: can't combine --all with specific branches" >&2; exit 2
+fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "git sync: not inside a git repository" >&2; exit 1; }
@@ -89,17 +129,118 @@ if [ -z "$base" ]; then
   [ -n "$base" ] || base=main
 fi
 
-# A rebase needs a clean tree; bail early with a clear message (both modes).
+# A rebase needs a clean tree; bail early with a clear message (every mode).
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "git sync: you have uncommitted changes — commit or stash them first" >&2
   exit 1
 fi
 
-# --------------------------------------------------------------------------
-# --all: sweep every local branch (prune merged, rebase/push the rest).
-# --------------------------------------------------------------------------
+# Expand "NNN-MMM" range tokens (PR numbers only) into individual ids. A token
+# only counts as a range if it's ENTIRELY digits-hyphen-digits — a branch name
+# like "task-42" has letters and passes through untouched. Mirrors git-pr, and
+# is applied to both targets and excludes so -x accepts ranges too.
+expand_ranges() {  # expand_ranges <out-array-name> <in-token...>
+  local out="$1"; shift
+  local t lo hi tmp2
+  for t in "$@"; do
+    if printf '%s' "$t" | grep -qE '^[0-9]+-[0-9]+$'; then
+      lo="${t%-*}"; hi="${t#*-}"
+      [ "$lo" -gt "$hi" ] && { tmp2=$lo; lo=$hi; hi=$tmp2; }
+      if [ $((hi - lo)) -gt 500 ]; then
+        echo "git sync: range '$t' spans more than 500 ids — that's probably a typo" >&2; exit 2
+      fi
+      while [ "$lo" -le "$hi" ]; do eval "$out+=(\"$lo\")"; lo=$((lo + 1)); done
+    else
+      eval "$out+=(\"\$t\")"
+    fi
+  done
+}
+target_ids=();  [ "${#raw_targets[@]}"  -gt 0 ] && expand_ranges target_ids  "${raw_targets[@]}"
+exclude_ids=(); [ "${#raw_excludes[@]}" -gt 0 ] && expand_ranges exclude_ids "${raw_excludes[@]}"
 
-# Print a labelled list, but only if the list is non-empty (bash 3.2 safe).
+# A numeric/URL token needs `gh` to become a branch; a plain name doesn't.
+needs_gh() { printf '%s' "$1" | grep -qE '^[0-9]+$|://'; }
+gh_required=0
+for t in "${target_ids[@]:-}" "${exclude_ids[@]:-}"; do
+  [ -n "$t" ] && needs_gh "$t" && { gh_required=1; break; }
+done
+if [ "$gh_required" = 1 ] && ! command -v gh >/dev/null 2>&1; then
+  echo "git sync: a PR number or URL target needs the GitHub CLI ('gh') — name the branch instead, or install https://cli.github.com" >&2
+  exit 1
+fi
+
+# Resolve a target token to a branch name (empty if it can't be resolved). A PR
+# number or URL goes through `gh` to its head branch; a plain name is used as-is,
+# with a last-ditch fallback to a local branch literally named that token.
+resolve_target() {
+  local t="$1" b=""
+  if needs_gh "$t"; then
+    b="$(gh pr view "$t" --json headRefName --jq '.headRefName' 2>/dev/null || true)"
+    [ -z "$b" ] && git show-ref --verify --quiet "refs/heads/$t" && b="$t"
+  else
+    b="$t"
+  fi
+  printf '%s' "$b"
+}
+
+# Result buckets, filled by sync_one and printed at the end.
+synced=(); locals=(); uptodate=(); pulled=(); pruned=(); conflicts=(); skipped=()
+
+# Rebase <branch> onto origin/<base> and push it (unless it IS the base, which is
+# pulled, never pushed). create_remote=1 → create the origin branch on first push
+# when it has none; 0 → leave a purely-local branch alone. Appends the branch to
+# the matching bucket. Assumes a clean tree, that the fetch already ran, and that
+# we're free to move HEAD (the caller restores it).
+sync_one() {  # sync_one <branch> <create_remote 0|1>
+  local b="$1" create_remote="$2"
+
+  # The base branch (or a target that is the base): a safe pull, never a push.
+  if [ "$b" = "$base" ]; then
+    git show-ref --verify --quiet "refs/remotes/origin/$base" || { skipped+=("$b (no origin/$base)"); return; }
+    git checkout --quiet "$b" 2>/dev/null || { skipped+=("$b (checkout failed)"); return; }
+    if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$base")" ]; then uptodate+=("$b"); return; fi
+    if git rebase "origin/$base" >/dev/null 2>&1; then pulled+=("$b"); else
+      git rebase --abort >/dev/null 2>&1 || true; conflicts+=("$b"); fi
+    return
+  fi
+
+  # A named target that isn't local yet but exists on origin → create a tracking
+  # branch so it can be rebased and pushed.
+  if git show-ref --verify --quiet "refs/heads/$b"; then
+    git checkout --quiet "$b" 2>/dev/null || { skipped+=("$b (checkout failed)"); return; }
+  elif git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+    git checkout --quiet -B "$b" --track "origin/$b" >/dev/null 2>&1 \
+      || { skipped+=("$b (couldn't create from origin/$b)"); return; }
+  else
+    skipped+=("$b (no such local or origin branch)"); return
+  fi
+
+  # The reaction git pr merge has when a rebase can't finish: abort it (leave the
+  # branch exactly as it was), and record it for the "conflicts" report — never a
+  # half-finished rebase left in the tree.
+  if ! git rebase "origin/$base" >/dev/null 2>&1; then
+    git rebase --abort >/dev/null 2>&1 || true
+    conflicts+=("$b"); return
+  fi
+
+  # Push. force-with-lease once there's a remote to lease against; -u to create
+  # the remote on first push when allowed (create_remote); otherwise a purely
+  # local branch is left as-is (never auto-published by a sweep).
+  if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 \
+     || git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+    if git push --force-with-lease --force-if-includes origin "$b" >/dev/null 2>&1; then
+      synced+=("$b")
+    else
+      skipped+=("$b (push refused — protected branch or lost lease)")
+    fi
+  elif [ "$create_remote" = 1 ]; then
+    if git push -u origin "$b" >/dev/null 2>&1; then synced+=("$b"); else skipped+=("$b (push failed)"); fi
+  else
+    locals+=("$b")
+  fi
+}
+
+# Print a labelled list, but only if it's non-empty (bash 3.2 safe).
 _report() {
   label="$1"; shift
   [ "$#" -eq 0 ] && return 0
@@ -107,61 +248,105 @@ _report() {
   for b in "$@"; do echo "  $b"; done
 }
 
-sync_all() {
-  start=$current
-
-  if [ "$dry" = 1 ]; then
-    git fetch origin --prune
+# The multi-branch summary (--all, or more than one target).
+report_summary() {
+  echo
+  _report "Synced (rebased + pushed)"   ${synced[@]+"${synced[@]}"}
+  _report "Pulled (base)"               ${pulled[@]+"${pulled[@]}"}
+  _report "Up to date"                  ${uptodate[@]+"${uptodate[@]}"}
+  _report "Rebased (local only)"        ${locals[@]+"${locals[@]}"}
+  _report "Pruned (merged)"             ${pruned[@]+"${pruned[@]}"}
+  _report "Conflicts — needs manual resolution" ${conflicts[@]+"${conflicts[@]}"}
+  _report "Skipped"                     ${skipped[@]+"${skipped[@]}"}
+  if [ "${#conflicts[@]}" -gt 0 ]; then
     echo
-    echo "Against 'origin/$base', would:"
+    warn "for each conflict: git checkout <branch> && git rebase origin/$base"
+  fi
+}
+
+# The one-liner for the everyday single-branch run (default, or one named target).
+report_one() {
+  if   [ "${#synced[@]}"    = 1 ]; then step "synced ${synced[0]} ${_dim}(rebased onto origin/$base, pushed)${_off}"
+  elif [ "${#pulled[@]}"    = 1 ]; then step "pulled ${pulled[0]} ${_dim}(rebased onto origin/$base, local only — not pushed)${_off}"
+  elif [ "${#uptodate[@]}"  = 1 ]; then step "${uptodate[0]} already up to date with origin/$base"
+  elif [ "${#locals[@]}"    = 1 ]; then step "rebased ${locals[0]} ${_dim}(onto origin/$base, local only — not pushed)${_off}"
+  elif [ "${#pruned[@]}"    = 1 ]; then step "pruned ${pruned[0]} ${_dim}(merged)${_off}"
+  elif [ "${#conflicts[@]}" = 1 ]; then warn "rebase conflicts on ${conflicts[0]} — aborted, untouched. Resolve by hand: git checkout ${conflicts[0]} && git rebase origin/$base"
+  elif [ "${#skipped[@]}"   = 1 ]; then warn "skipped ${skipped[0]}"
+  fi
+}
+
+start="$current"
+
+# ══════════════════════════════════════════════════════════════════════════
+# Dry run — compute and print the plan, change nothing.
+# ══════════════════════════════════════════════════════════════════════════
+if [ "$dry" = 1 ]; then
+  git fetch origin --prune
+  echo
+  excl=" "
+  for x in "${exclude_ids[@]:-}"; do [ -n "$x" ] && { xb="$(resolve_target "$x")"; [ -n "$xb" ] && excl="$excl$xb "; }; done
+  echo "Against 'origin/$base', would:"
+  if [ "$all" = 1 ]; then
     while IFS= read -r b; do
       [ "$b" = "$base" ] && continue
+      case "$excl" in *" $b "*) echo "  skip (excluded): $b"; continue ;; esac
       if git merge-base --is-ancestor "$b" "origin/$base" 2>/dev/null; then
-        echo "  prune (merged):    $b"
+        echo "  prune (merged):  $b"
       else
-        echo "  rebase + push:     $b"
+        echo "  rebase + push:   $b"
       fi
     done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
-    return 0
+  else
+    plan_branches=()
+    if [ "${#target_ids[@]}" -gt 0 ]; then
+      for t in "${target_ids[@]}"; do
+        b="$(resolve_target "$t")"
+        [ -z "$b" ] && { echo "  skip (unresolved): $t"; continue; }
+        plan_branches+=("$b")
+      done
+    else
+      plan_branches=("$current")
+    fi
+    for b in "${plan_branches[@]}"; do
+      case "$excl" in *" $b "*) echo "  skip (excluded): $b"; continue ;; esac
+      if [ "$b" = "$base" ]; then echo "  pull (no push):  $b"; else echo "  rebase + push:   $b"; fi
+    done
   fi
+  echo
+  echo "Run without --dry-run to actually sync."
+  exit 0
+fi
 
-  git fetch origin --prune
+git fetch --quiet origin --prune
 
-  # Fast-forward local base to the remote tip so a merged-check against it (and
-  # the eventual `branch -d`) sees current state. Best effort — skip if diverged.
-  if [ "$current" != "$base" ]; then
-    git checkout --quiet "$base"
-  fi
+# Resolve the excludes to a space-padded set of branch names for membership tests.
+exclude_set=" "
+for x in "${exclude_ids[@]:-}"; do
+  [ -z "$x" ] && continue
+  xb="$(resolve_target "$x")"; [ -n "$xb" ] && exclude_set="$exclude_set$xb "
+done
+is_excluded() { case "$exclude_set" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# ══════════════════════════════════════════════════════════════════════════
+# --all: prune merged branches, rebase/push the rest (a broad sweep — never
+# creates a remote for a purely-local branch).
+# ══════════════════════════════════════════════════════════════════════════
+if [ "$all" = 1 ]; then
+  # Fast-forward local base to the remote tip so the merged-check (and the
+  # eventual `branch -d`) sees current state. Best effort — skip if diverged.
+  if [ "$current" != "$base" ]; then git checkout --quiet "$base" 2>/dev/null || true; fi
   git merge --ff-only "origin/$base" >/dev/null 2>&1 \
     || echo "note: local '$base' didn't fast-forward (diverged?) — continuing." >&2
 
-  synced=(); pushedless=(); pruned=(); conflicts=(); skipped=()
   while IFS= read -r b; do
     [ "$b" = "$base" ] && continue
+    if is_excluded "$b"; then skipped+=("$b (excluded)"); continue; fi
     if git merge-base --is-ancestor "$b" "origin/$base" 2>/dev/null; then
-      if git branch -d "$b" >/dev/null 2>&1; then pruned+=("$b"); else skipped+=("$b"); fi
+      if git branch -d "$b" >/dev/null 2>&1; then pruned+=("$b"); else skipped+=("$b (couldn't delete)"); fi
       continue
     fi
-    git checkout --quiet "$b" || { skipped+=("$b"); continue; }
-    if git rebase "origin/$base" >/dev/null 2>&1; then
-      # Push if the branch has an upstream OR already exists on origin (pushed
-      # once without -u). A purely local branch is left alone — don't create a
-      # remote for it.
-      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 \
-        || git show-ref --verify --quiet "refs/remotes/origin/$b"; then
-        if git push --force-with-lease --force-if-includes origin "$b" >/dev/null 2>&1
-        then
-          synced+=("$b")
-        else
-          skipped+=("$b")  # push refused (protected / lost the lease) — leave it
-        fi
-      else
-        pushedless+=("$b")  # rebased, but never pushed → don't create a remote
-      fi
-    else
-      git rebase --abort >/dev/null 2>&1 || true
-      conflicts+=("$b")
-    fi
+    sync_one "$b" 0
   done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
 
   # Return to where we started (or the base if that branch got pruned).
@@ -170,82 +355,42 @@ sync_all() {
   else
     git checkout --quiet "$base"
   fi
-
-  echo
-  _report "Synced (rebased + pushed)"   ${synced[@]+"${synced[@]}"}
-  _report "Rebased (local only)"        ${pushedless[@]+"${pushedless[@]}"}
-  _report "Pruned (merged)"             ${pruned[@]+"${pruned[@]}"}
-  _report "Conflicts — sync by hand"    ${conflicts[@]+"${conflicts[@]}"}
-  _report "Skipped"                     ${skipped[@]+"${skipped[@]}"}
-  if [ "${#conflicts[@]}" -gt 0 ]; then
-    echo
-    warn "for each conflict: git checkout <branch> && git sync"
-  fi
-}
-
-if [ "$all" = 1 ]; then
-  sync_all
+  report_summary
   exit 0
 fi
 
-# --------------------------------------------------------------------------
-# Single-branch (default).
-# --------------------------------------------------------------------------
-
-# On the base branch itself, `git sync` acts like a safe pull: fetch and bring
-# local <base> in line with origin/<base>, replaying any local commits on top
-# (rebase → fast-forward when you're only behind). It never pushes — you don't
-# force-push the base, and updating it locally is the whole point here.
-if [ "$current" = "$base" ]; then
-  git show-ref --verify --quiet "refs/remotes/origin/$base" || {
-    echo "git sync: no 'origin/$base' to sync from" >&2; exit 1; }
-  if [ "$dry" = 1 ]; then
-    echo "Would run, on base '$base':"
-    echo "  git fetch origin --prune"
-    echo "  git rebase origin/$base   (fast-forwards if you're only behind)"
-    echo "  (no push — syncing the base only updates it locally)"
-    exit 0
-  fi
-  git fetch --quiet origin --prune
-  if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$base")" ]; then
-    step "$base already up to date with origin/$base"
-    exit 0
-  fi
-  if ! git rebase "origin/$base" >/dev/null 2>&1; then
-    warn "rebase hit conflicts pulling $base — resolve (git status), then: git rebase --continue (or --abort)"
-    exit 1
-  fi
-  step "pulled $base ${_dim}(rebased onto origin/$base, local only — not pushed)${_off}"
-  exit 0
-fi
-
-if [ "$dry" = 1 ]; then
-  echo "Would run, on branch '$current':"
-  echo "  git fetch origin --prune"
-  echo "  git rebase origin/$base"
-  echo "  git push --force-with-lease --force-if-includes"
-  exit 0
-fi
-
-git fetch --quiet origin --prune
-
-if ! git rebase "origin/$base" >/dev/null 2>&1; then
-  warn "rebase hit conflicts — resolve (git status), then: git rebase --continue (or --abort), then git push --force-with-lease"
-  exit 1
-fi
-
-# Force-with-lease only makes sense once the branch has an upstream; the first
-# push just sets one.
-if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-  if git push --force-with-lease --force-if-includes >/dev/null 2>&1; then
-    step "synced $current ${_dim}(rebased onto origin/$base, pushed)${_off}"
-  else
-    warn "rebased, but push was refused (protected branch or lost lease) — push by hand"; exit 1
-  fi
+# ══════════════════════════════════════════════════════════════════════════
+# Explicit targets, or (with none) the current branch.
+# ══════════════════════════════════════════════════════════════════════════
+branches=()
+if [ "${#target_ids[@]}" -gt 0 ]; then
+  seen=" "
+  for t in "${target_ids[@]}"; do
+    b="$(resolve_target "$t")"
+    if [ -z "$b" ]; then skipped+=("$t (couldn't resolve to a branch)"); continue; fi
+    case "$seen" in *" $b "*) continue ;; esac
+    seen="$seen$b "
+    if is_excluded "$b"; then skipped+=("$b (excluded)"); continue; fi
+    branches+=("$b")
+  done
 else
-  if git push -u origin "$current" >/dev/null 2>&1; then
-    step "synced $current ${_dim}(rebased onto origin/$base, pushed new branch)${_off}"
-  else
-    warn "rebased, but push failed — push by hand"; exit 1
+  if is_excluded "$current"; then
+    warn "current branch '$current' is excluded — nothing to do"; exit 0
   fi
+  branches=("$current")
 fi
+
+for b in ${branches[@]+"${branches[@]}"}; do
+  sync_one "$b" 1
+done
+
+# Return to where we started if we moved off it (a named target isn't the
+# current branch; the base-ff/prune path can also move HEAD).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "$start" ] && git show-ref --verify --quiet "refs/heads/$start"; then
+  git checkout --quiet "$start"
+fi
+
+# One acted branch → the familiar one-liner; more than one → the full summary.
+acted=$(( ${#synced[@]} + ${#pulled[@]} + ${#uptodate[@]} + ${#locals[@]} + ${#pruned[@]} + ${#conflicts[@]} + ${#skipped[@]} ))
+if [ "$acted" = 1 ]; then report_one; else report_summary; fi
+exit 0
