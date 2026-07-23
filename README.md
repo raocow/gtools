@@ -44,10 +44,15 @@ cooperate.
 
 If `install.sh` doesn't detect that directory on your `$fpath` already, it
 prints the one-time setup (the standard Homebrew zsh-completions snippet —
-not gtools-specific, and skippable if you already have something like it):
+not gtools-specific, and skippable if you already have something like it).
+Append, don't prepend: if you also have Homebrew's `git` formula installed,
+it ships its own `_git` (a different implementation, in the same kind of
+directory) that doesn't support the `_git-<subcommand>` dispatch these
+completions rely on — prepending would let it shadow the system `_git` that
+does, breaking dispatch even though gtools' own files are fine:
 
 ```zsh
-fpath=("~/.local/share/zsh/site-functions" $fpath)   # path install.sh prints
+fpath+=("~/.local/share/zsh/site-functions")   # path install.sh prints
 autoload -Uz compinit && compinit
 ```
 

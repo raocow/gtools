@@ -97,8 +97,12 @@ else
   echo "For Tab-completion of these commands — including 'git new <TAB>' for"
   echo "cycling through short names instead of typing a long one — add this to"
   echo "~/.zshrc (the general Homebrew zsh-completions snippet, not specific to"
-  echo "gtools; skip it if you already have something like it):"
-  echo "       fpath=(\"$fndir\" \$fpath)"
+  echo "gtools; skip it if you already have something like it). Append, don't"
+  echo "prepend: Homebrew's git package ships its own _git (a different"
+  echo "implementation) in this same directory, which doesn't support the"
+  echo "_git-<subcommand> dispatch these completions rely on — prepending would"
+  echo "let it shadow the system _git that does."
+  echo "       fpath+=(\"$fndir\")"
   echo "       autoload -Uz compinit && compinit"
 fi
 echo
