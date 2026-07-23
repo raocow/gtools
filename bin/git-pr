@@ -57,13 +57,22 @@
 #
 # For each PR, in that order:
 #   - mergeStateStatus CLEAN/UNSTABLE  → merge it directly (gh pr merge).
-#   - BEHIND/DIRTY                     → rebase the branch onto its base in a
+#   - BEHIND                           → try a direct merge first — GitHub's
+#                                         own merge does a real three-way merge
+#                                         server-side and often succeeds with
+#                                         no local rebase at all. Only on
+#                                         failure does it fall back to the
+#                                         DIRTY path below.
+#   - DIRTY                            → rebase the branch onto its base in a
 #                                         scratch worktree (never touches your
 #                                         current branch/worktree) and push; if
 #                                         the rebase itself hits conflicts,
 #                                         abort it and skip — that needs a human.
 #   - BLOCKED (required checks/reviews) → skip; never bypassed.
 #   - draft                            → skip.
+# Every merge attempt retries a few times with a short pause on failure —
+# right after a push, GitHub can take a moment to recompute mergeability, so
+# a bare first attempt can fail even though the PR is genuinely mergeable.
 # Skipped PRs are listed at the end with why. Merging one PR can change the
 # status of the ones after it (e.g. newly BEHIND) — each PR's status is
 # re-checked right before it's handled, not just at the start.
@@ -360,6 +369,24 @@ if [ "$subcmd" = "merge" ]; then
   title_of() { grep -m1 "^$1"$'\t' "$titles_file" | cut -f2-; }
   meta_of()  { grep -m1 "^$1"$'\t' "$tmp/meta"; }   # num\thead\tbase
 
+  # Retry `gh pr merge` a few times with a short pause. Right after a push,
+  # GitHub can take a moment to recompute mergeability — an immediate merge
+  # attempt can fail even though the PR is genuinely mergeable, which used to
+  # mean skipping and telling you to rerun the whole command just to wait a
+  # few seconds. Bounded (not indefinite), so a real failure still surfaces
+  # promptly. Prints the last attempt's output; exit status is its own.
+  merge_with_retry() {
+    local num="$1" tries=0 err
+    while true; do
+      if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+        printf '%s' "$err"; return 0
+      fi
+      tries=$((tries + 1))
+      [ "$tries" -ge 3 ] && { printf '%s' "$err"; return 1; }
+      sleep 2
+    done
+  }
+
   # Rebase a PR's branch onto its base in a scratch worktree, then push. Never
   # touches the current worktree/branch. Returns 0 on a clean rebase (and
   # leaves it pushed), 1 if the rebase itself needs manual resolution.
@@ -400,7 +427,7 @@ if [ "$subcmd" = "merge" ]; then
         if [ "$dry" = 1 ]; then
           plan+=("#$num $title -- merge ($method)"); continue
         fi
-        if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+        if err="$(merge_with_retry "$num")"; then
           step "merged #$num ${_dim}($title)${_off}"
           merged+=("#$num $title")
         else
@@ -410,26 +437,44 @@ if [ "$subcmd" = "merge" ]; then
         ;;
       BEHIND|DIRTY)
         if [ "$dry" = 1 ]; then
-          plan+=("#$num $title -- rebase onto $base, then merge"); continue
+          if [ "$status" = "BEHIND" ]; then
+            plan+=("#$num $title -- try direct merge, else rebase onto $base")
+          else
+            plan+=("#$num $title -- rebase onto $base, then merge")
+          fi
+          continue
         fi
-        rebase_and_push "$head" "$base"; rc=$?
-        case "$rc" in
-          0)
-            if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
-              step "rebased + merged #$num ${_dim}($title)${_off}"
-              merged+=("#$num $title")
-            else
-              warn "rebased #$num but merge didn't go through yet — rerun 'git pr merge $num' to retry"
-              skipped+=("#$num $title -- rebased and pushed; merge pending (rerun to retry)")
-            fi
-            ;;
-          1) warn "skipping #$num — rebase needs manual conflict resolution"
-             skipped+=("#$num $title -- rebase conflicts, needs manual resolution") ;;
-          2) warn "skipping #$num — branch '$head' is checked out in a worktree"
-             skipped+=("#$num $title -- branch checked out elsewhere") ;;
-          *) warn "skipping #$num — couldn't fetch/rebase '$head'"
-             skipped+=("#$num $title -- couldn't rebase (fetch/push failed)") ;;
-        esac
+        # BEHIND (not DIRTY) means GitHub hasn't found a textual conflict —
+        # its own merge does a real three-way merge server-side and often
+        # succeeds with no local rebase at all. Try that first and only fall
+        # back to rebasing if it fails. DIRTY means GitHub already found a
+        # real conflict, so go straight to rebasing.
+        merged_directly=0
+        if [ "$status" = "BEHIND" ] && gh pr merge "$num" "$merge_flag" >/dev/null 2>&1; then
+          step "merged #$num ${_dim}($title, no rebase needed)${_off}"
+          merged+=("#$num $title")
+          merged_directly=1
+        fi
+        if [ "$merged_directly" = 0 ]; then
+          rebase_and_push "$head" "$base"; rc=$?
+          case "$rc" in
+            0)
+              if err="$(merge_with_retry "$num")"; then
+                step "rebased + merged #$num ${_dim}($title)${_off}"
+                merged+=("#$num $title")
+              else
+                warn "rebased #$num but merge still hasn't gone through — rerun 'git pr merge $num' to retry"
+                skipped+=("#$num $title -- rebased and pushed; merge pending (rerun to retry)")
+              fi
+              ;;
+            1) warn "skipping #$num — rebase needs manual conflict resolution"
+               skipped+=("#$num $title -- rebase conflicts, needs manual resolution") ;;
+            2) warn "skipping #$num — branch '$head' is checked out in a worktree"
+               skipped+=("#$num $title -- branch checked out elsewhere") ;;
+            *) warn "skipping #$num — couldn't fetch/rebase '$head'"
+               skipped+=("#$num $title -- couldn't rebase (fetch/push failed)") ;;
+          esac
+        fi
         ;;
       BLOCKED)
         [ "$dry" = 1 ] && { plan+=("#$num $title -- skip: blocked (required checks/reviews)"); continue; }
@@ -440,7 +485,7 @@ if [ "$subcmd" = "merge" ]; then
         if [ "$dry" = 1 ]; then
           plan+=("#$num $title -- attempt merge ($status)"); continue
         fi
-        if err="$(gh pr merge "$num" "$merge_flag" 2>&1)"; then
+        if err="$(merge_with_retry "$num")"; then
           step "merged #$num ${_dim}($title)${_off}"
           merged+=("#$num $title")
         else

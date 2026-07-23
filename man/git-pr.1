@@ -157,8 +157,13 @@ or
 .BR UNSTABLE :
 merged directly.
 .IP \(bu 2
-.B BEHIND
-or
+.BR BEHIND :
+tried as a direct merge first \(em GitHub's own merge does a real three-way
+merge server-side and often succeeds with no local rebase at all. Only on
+failure does it fall back to the
+.B DIRTY
+handling below.
+.IP \(bu 2
 .BR DIRTY :
 its branch is rebased onto its base in a scratch
 .B git worktree
@@ -174,7 +179,10 @@ Draft PRs, or an ID that cannot be resolved to an open PR: skipped.
 .PP
 Merging one PR can change the status of the ones after it (e.g. a PR that was
 clean can become behind). Each PR's status is re-checked right before it is
-handled, not just once at the start.
+handled, not just once at the start. Every merge attempt is retried a few
+times with a short pause on failure \(em right after a push, GitHub can take a
+moment to recompute mergeability, so a bare first attempt can fail even
+though the PR is genuinely mergeable.
 .PP
 The merge method defaults to the repository's own default merge method
 (from
