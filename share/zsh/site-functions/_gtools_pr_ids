@@ -1,20 +1,10 @@
 #autoload
 #
-# PR numbers (with title as the shown description) + branch names, for
-# commands that take either as a target. compadd must run in THIS shell, not
-# a subshell, so candidates are collected into arrays first — never
-# `| while read` into compadd, or the completion system never sees them.
-local -a prs pr_nums pr_descs branches
-prs=(${(f)"$(_gtools_open_prs)"})
-local p num rest branch title
-for p in $prs; do
-  num="${p%%$'\t'*}"; rest="${p#*$'\t'}"
-  branch="${rest%%$'\t'*}"; title="${rest#*$'\t'}"
-  pr_nums+=("$num")
-  # Show "NUMBER  title" so the list is actually pickable at a glance; the
-  # value inserted is just NUMBER (-a pr_nums), the rest is display (-d).
-  pr_descs+=("$num  $title")
-done
+# PR numbers (with titles) + branch names, for commands that take EITHER as a
+# target — i.e. `git sync`, where you routinely sync a plain branch. `git pr`
+# deliberately uses _gtools_pr_nums instead (PRs only): it's about picking a
+# PR, so the full branch list there is just noise.
+_gtools_pr_nums
+local -a branches
 branches=(${(f)"$(_gtools_branches)"})
-(( $#pr_nums )) && compadd -X 'open PRs' -d pr_descs -a pr_nums
 (( $#branches )) && compadd -X 'branches' -a branches
