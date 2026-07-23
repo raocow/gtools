@@ -1,6 +1,8 @@
 #autoload
 #
-# Open PR numbers for this repo, "NUMBER:head-branch" — best effort, silent
-# if gh/network is unavailable (never blocks completion on an error).
-gh pr list --state open --limit 200 --json number,headRefName \
-  --jq '.[] | "\(.number):\(.headRefName)"' 2>/dev/null
+# Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>title" —
+# best effort, silent if gh/network is unavailable (never blocks completion
+# on an error). Tab-separated (not ':') because PR titles routinely contain
+# colons.
+gh pr list --state open --limit 200 --json number,headRefName,title \
+  --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>/dev/null

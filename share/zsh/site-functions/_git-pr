@@ -1,14 +1,15 @@
 #autoload
 #
 # Completion for `git pr` (list / checkout / merge). Candidates are real open
-# PRs and real branches — nothing generated or guessed. '.'/'@' (the current
-# branch) is offered everywhere an id is accepted.
+# PRs (shown with their titles) and real branches — nothing generated or
+# guessed. '.'/'@' (the current branch) is offered everywhere an id is
+# accepted. Flags are only offered once you type a leading '-', so a bare TAB
+# is PRs-first instead of a wall of options.
+local -a alts
 if (( CURRENT == 2 )); then
-  _alternative \
-    'subcommands:subcommand:(merge list)' \
-    'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
-    'current:current branch:(. @)' \
-    'ids:PR or branch:_gtools_pr_ids'
+  alts=('subcommands:subcommand:(merge list)' 'current:current branch:(. @)' 'ids:PR or branch:_gtools_pr_ids')
+  [[ $PREFIX == -* ]] && alts+=('flags:flag:(-h --help -nt --no-title -a --all -x --exclude)')
+  _alternative $alts
   return
 fi
 if [[ ${words[2]} == merge ]]; then
@@ -17,10 +18,9 @@ if [[ ${words[2]} == merge ]]; then
     -x|--exclude)
       _alternative 'current:current branch:(. @)' 'ids:PR or branch:_gtools_pr_ids'; return ;;
   esac
-  _alternative \
-    'flags:flag:(-a --all -x --exclude -n --dry-run --method -h --help)' \
-    'current:current branch:(. @)' \
-    'ids:PR, branch, or NNN-MMM range:_gtools_pr_ids'
+  alts=('current:current branch:(. @)' 'ids:PR, branch, or NNN-MMM range:_gtools_pr_ids')
+  [[ $PREFIX == -* ]] && alts+=('flags:flag:(-a --all -x --exclude -n --dry-run --method -h --help)')
+  _alternative $alts
   return
 fi
 # Bare (no subcommand) or `list` share the same grammar: ids/ranges, -a/--all,
@@ -29,7 +29,6 @@ case ${words[CURRENT-1]} in
   -x|--exclude)
     _alternative 'current:current branch:(. @)' 'ids:PR or branch:_gtools_pr_ids'; return ;;
 esac
-_alternative \
-  'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
-  'current:current branch:(. @)' \
-  'ids:PR, branch, or URL:_gtools_pr_ids'
+alts=('current:current branch:(. @)' 'ids:PR, branch, or URL:_gtools_pr_ids')
+[[ $PREFIX == -* ]] && alts+=('flags:flag:(-h --help -nt --no-title -a --all -x --exclude)')
+_alternative $alts
