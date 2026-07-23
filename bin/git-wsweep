@@ -83,8 +83,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "git wsweep: not inside a git repository" >&2; exit 1; }
+require_git_repo "git wsweep"
 
 # Refresh remote-tracking refs first (best effort; ignore offline failures) so
 # "merged" is judged against origin's current tip — mirrors git-sweep, so a

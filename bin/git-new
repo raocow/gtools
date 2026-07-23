@@ -16,6 +16,17 @@
 #
 set -euo pipefail
 
+# Resolve this script's real location (following symlinks — it's installed as
+# one) to find lib/git-tools-common.sh, shared across the git-* tools:
+# require_git_repo() here.
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/git-tools-common.sh"
+
 usage() {
   cat <<'EOF'
 git new — create a branch and switch to it (a thin wrapper around
@@ -43,8 +54,7 @@ done
 
 [ -n "$name" ] || { echo "git new: give it a branch name (try -h)" >&2; exit 2; }
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "git new: not inside a git repository" >&2; exit 1; }
+require_git_repo "git new"
 
 if [ -n "$base" ]; then
   git switch -c "$name" "$base"

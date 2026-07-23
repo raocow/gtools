@@ -116,8 +116,7 @@ if [ "$all" = 1 ] && [ "${#raw_targets[@]}" -gt 0 ]; then
   echo "git sync: can't combine --all with specific branches" >&2; exit 2
 fi
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "git sync: not inside a git repository" >&2; exit 1; }
+require_git_repo "git sync"
 
 current=$(git rev-parse --abbrev-ref HEAD)
 [ "$current" != "HEAD" ] || {

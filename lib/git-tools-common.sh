@@ -65,3 +65,17 @@ expand_ranges() {
     fi
   done
 }
+
+# Standard entry guards, identical wording across the suite except the
+# command name (passed as $1). `exit` here terminates the whole script, same
+# as if it were written inline (source runs in the same shell, not a
+# subshell).
+require_git_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "$1: not inside a git repository" >&2; exit 1; }
+}
+
+require_gh() {
+  command -v gh >/dev/null 2>&1 || {
+    echo "$1: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
+}

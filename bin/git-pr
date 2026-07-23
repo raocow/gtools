@@ -215,10 +215,8 @@ if [ "$subcmd" = "" ] && [ "${#raw_targets[@]}" -eq 1 ] && [ "${#raw_excludes[@]
   id="${raw_targets[0]}"
 fi
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "git pr: not inside a git repository" >&2; exit 1; }
-command -v gh >/dev/null 2>&1 || {
-  echo "git pr: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
+require_git_repo "git pr"
+require_gh "git pr"
 
 # ══════════════════════════════════════════════════════════════════════════
 # git pr merge: merge specific PR(s), or --all mergeable PRs you authored.

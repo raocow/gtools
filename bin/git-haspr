@@ -15,6 +15,17 @@
 #
 set -euo pipefail
 
+# Resolve this script's real location (following symlinks — it's installed as
+# one) to find lib/git-tools-common.sh, shared across the git-* tools:
+# require_git_repo() and require_gh() here.
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/git-tools-common.sh"
+
 case "${1:-}" in
   -h|--help)
     cat <<'EOF'
@@ -33,10 +44,8 @@ EOF
     exit 0 ;;
 esac
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "git haspr: not inside a git repository" >&2; exit 1; }
-command -v gh >/dev/null 2>&1 || {
-  echo "git haspr: needs the GitHub CLI ('gh') — https://cli.github.com" >&2; exit 1; }
+require_git_repo "git haspr"
+require_gh "git haspr"
 
 branch="${1:-}"
 if [ -z "$branch" ]; then
