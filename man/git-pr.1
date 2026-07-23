@@ -66,6 +66,34 @@ range (see
 .B git pr merge
 below for the exact range syntax); naming PRs this way is not scoped to
 you, and shows every state (open, closed, merged), not just open.
+.PP
+An
+.I ID
+may also be
+.B .
+or
+.BR @ ,
+meaning the branch you are currently on \(em the PR for the current branch,
+the same idea as
+.B gh pr view
+with no argument. It works anywhere an ID is accepted:
+.B git pr list .
+shows the current branch's PR,
+.B git pr .
+checks it out,
+.B git pr merge .
+merges it, and
+.B \-x .
+excludes it. On a detached HEAD there is no current branch, so
+.B .
+/
+.B @
+is an error there. Bare
+.B git pr
+and
+.B git pr list
+with no ID still list all your open PRs \(em this is an explicit extra token,
+not a change to the default.
 .RB ( \-x / \-\-exclude
 works the same as under
 .BR "git pr merge" ; " " \-a / \-\-all

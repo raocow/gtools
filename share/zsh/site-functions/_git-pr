@@ -1,29 +1,35 @@
 #autoload
 #
 # Completion for `git pr` (list / checkout / merge). Candidates are real open
-# PRs and real branches — nothing generated or guessed.
+# PRs and real branches — nothing generated or guessed. '.'/'@' (the current
+# branch) is offered everywhere an id is accepted.
 if (( CURRENT == 2 )); then
   _alternative \
     'subcommands:subcommand:(merge list)' \
     'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
+    'current:current branch:(. @)' \
     'ids:PR or branch:_gtools_pr_ids'
   return
 fi
 if [[ ${words[2]} == merge ]]; then
   case ${words[CURRENT-1]} in
     --method) compadd merge squash rebase; return ;;
-    -x|--exclude) _gtools_pr_ids; return ;;
+    -x|--exclude)
+      _alternative 'current:current branch:(. @)' 'ids:PR or branch:_gtools_pr_ids'; return ;;
   esac
   _alternative \
     'flags:flag:(-a --all -x --exclude -n --dry-run --method -h --help)' \
+    'current:current branch:(. @)' \
     'ids:PR, branch, or NNN-MMM range:_gtools_pr_ids'
   return
 fi
 # Bare (no subcommand) or `list` share the same grammar: ids/ranges, -a/--all,
 # -x/--exclude.
 case ${words[CURRENT-1]} in
-  -x|--exclude) _gtools_pr_ids; return ;;
+  -x|--exclude)
+    _alternative 'current:current branch:(. @)' 'ids:PR or branch:_gtools_pr_ids'; return ;;
 esac
 _alternative \
   'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
+  'current:current branch:(. @)' \
   'ids:PR, branch, or URL:_gtools_pr_ids'

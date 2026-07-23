@@ -16,6 +16,11 @@
 #
 # The checkout/list argument (and each merge argument) can be a PR number, a
 # head branch name, or a PR URL — whatever `gh` can resolve to a pull request.
+# It can also be "." or "@", meaning the branch you're currently on (the PR
+# for the current branch — same idea as `gh pr view` with no argument); this
+# works anywhere an id is accepted, so `git pr list .` shows the current
+# branch's PR, `git pr .` checks it out, `git pr merge .` merges it. Bare
+# `git pr` / `git pr list` with no token still lists all your open PRs.
 # Checkout uses `gh pr checkout`, which creates the branch or fast-forwards an
 # existing one to the PR's latest — so you're never on a stale copy. For a
 # merged/closed PR whose head branch was deleted from origin, it falls back to
@@ -122,6 +127,9 @@ git pr — list your open PRs, check one out, or merge one or more.
                               URL), updated to the PR's latest
   git pr list <ids...>        show title/link for specific PR(s) instead of
                               checking out — any count, any author, any state
+  git pr list .               show the PR for the CURRENT branch ('.' or '@'
+                              means the branch you're on — works anywhere an
+                              id is accepted: list, checkout, merge, -x)
   git pr <ids...>             2+ ids (or -x, or a range): same as `git pr
                               list <ids...>` — kept for backward compatibility
   git pr merge <ids...>       merge the given PR(s) (number, branch, URL, or a
@@ -209,6 +217,35 @@ else
   fi
 fi
 
+require_git_repo "git pr"
+
+# A target or exclude of '.' or '@' means the current branch — the PR for the
+# branch you're on (same idea as `gh pr view` with no argument). Resolve it to
+# the real branch name up front so every downstream path (checkout, list,
+# exclude) treats it like any other branch name. This is an explicit extra
+# token, not a change to the default: bare `git pr` / `git pr list` still
+# lists all your open PRs. ('.'/'@' can't be a real PR number or branch name,
+# so claiming them collides with nothing.)
+_here=0
+if [ "${#raw_targets[@]}" -gt 0 ]; then
+  for t in "${raw_targets[@]}"; do case "$t" in .|@) _here=1 ;; esac; done
+fi
+if [ "${#raw_excludes[@]}" -gt 0 ]; then
+  for t in "${raw_excludes[@]}"; do case "$t" in .|@) _here=1 ;; esac; done
+fi
+if [ "$_here" = 1 ]; then
+  here_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [ -z "$here_branch" ] || [ "$here_branch" = HEAD ]; then
+    echo "git pr: '.'/'@' means the current branch, but you're on a detached HEAD" >&2; exit 1
+  fi
+  i=0; while [ "$i" -lt "${#raw_targets[@]}" ]; do
+    case "${raw_targets[$i]}" in .|@) raw_targets[$i]="$here_branch" ;; esac; i=$((i + 1))
+  done
+  i=0; while [ "$i" -lt "${#raw_excludes[@]}" ]; do
+    case "${raw_excludes[$i]}" in .|@) raw_excludes[$i]="$here_branch" ;; esac; i=$((i + 1))
+  done
+fi
+
 # expand_ranges (shared, from lib/git-tools-common.sh) expands "NNN-MMM"
 # range tokens into individual ids — a token only counts as a range if it's
 # ENTIRELY digits-hyphen-digits, so a branch name like "task-42" passes
@@ -230,7 +267,6 @@ if [ "$subcmd" = "" ] && [ "${#raw_targets[@]}" -eq 1 ] && [ "${#raw_excludes[@]
   id="${raw_targets[0]}"
 fi
 
-require_git_repo "git pr"
 require_gh "git pr"
 
 # ══════════════════════════════════════════════════════════════════════════
