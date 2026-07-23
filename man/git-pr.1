@@ -9,6 +9,11 @@ git-pr \- list your open pull requests, check one out, or merge one or more
 .I NUMBER
 .br
 .B git pr
+.B list
+.RI [ ID " ...]"
+[\fB\-x\fR|\fB\-\-exclude\fR \fIID\fR ...]
+.br
+.B git pr
 .B merge
 .RI [ ID " ...]"
 [\fB\-a\fR|\fB\-\-all\fR]
@@ -47,6 +52,30 @@ so if the GitHub CLI cannot reach GitHub,
 .B git pr <NUMBER>
 falls back to switching to the stamped local branch as-is (without updating it),
 letting checkout still work offline.
+.PP
+.B git pr list
+.I ID
+.RI [ ID " ...]"
+shows the title/link for the given PR(s) instead of checking one out \(em any
+count, including one, so it is the explicit way to inspect a single PR
+without touching your working tree.
+.I ID
+can be a PR number, head branch name, PR URL, or an
+.I NNN-MMM
+range (see
+.B git pr merge
+below for the exact range syntax); naming PRs this way is not scoped to
+you, and shows every state (open, closed, merged), not just open.
+.RB ( \-x / \-\-exclude
+works the same as under
+.BR "git pr merge" .)
+As a holdover from before
+.B list
+was its own subcommand, giving
+.B git pr
+two or more bare IDs (or a range, or
+.BR \-x )
+with no subcommand does the same thing.
 .PP
 Named
 .I git pr

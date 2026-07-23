@@ -111,8 +111,10 @@ git pr — list your open PRs, check one out, or merge one or more.
   git pr -nt                  list them as bare URLs (--no-title)
   git pr <n|branch>           check out that PR (by number, branch name, or
                               URL), updated to the PR's latest
-  git pr <ids...>             2+ ids (or -x, or a range): list exactly those
-                              PRs instead — any author, any state
+  git pr list <ids...>        show title/link for specific PR(s) instead of
+                              checking out — any count, any author, any state
+  git pr <ids...>             2+ ids (or -x, or a range): same as `git pr
+                              list <ids...>` — kept for backward compatibility
   git pr merge <ids...>       merge the given PR(s) (number, branch, URL, or a
                               "824-830" range — all mixable), rebasing what
                               needs it, skipping what needs a human
@@ -126,9 +128,11 @@ git pr — list your open PRs, check one out, or merge one or more.
 Uses the GitHub CLI (gh). Checkout falls back to refs/pull/<n>/head for deleted
 branches, or (offline) to the local branch.
 
-Exactly one plain id (not a range) with no -x checks it out — anything more
-flexible (multiple ids, a range, or -x) lists that set instead, since you
-can't check out more than one PR. Naming PRs explicitly isn't scoped to you.
+`git pr <id>` (no subcommand, exactly one plain id, no -x) checks it out — you
+can't check out more than one PR at once. To see a single PR's title/link
+without touching your working tree, say so explicitly with `git pr list <id>`.
+Naming PRs explicitly (via `list`, or bare multi/range/-x — kept for old
+muscle memory) isn't scoped to you.
 
 `git pr merge <ids>` merges exactly the PRs you named, whoever authored them.
 `git pr merge --all` (no ids) is a broad sweep, so it only ever considers PRs
@@ -156,8 +160,10 @@ raw_targets=()   # positional args before -x: ids and/or "NNN-MMM" ranges
 raw_excludes=()  # positional args after -x/--exclude
 in_exclude=0     # once -x is seen, bare tokens go to raw_excludes until another flag
 
-# `merge` is a subcommand, not a flag: `git pr merge <ids...>` / `--all`.
-if [ "${1:-}" = "merge" ]; then subcmd="merge"; shift; fi
+# `merge`/`list` are subcommands, not flags: `git pr merge <ids...>` / `--all`,
+# `git pr list <ids...>`.
+if [ "${1:-}" = "merge" ]; then subcmd="merge"; shift;
+elif [ "${1:-}" = "list" ]; then subcmd="list"; shift; fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -198,11 +204,13 @@ merge_ids=()
 exclude_ids=()
 [ "${#raw_excludes[@]}" -gt 0 ] && expand_ranges "git pr" exclude_ids "${raw_excludes[@]}"
 
-# Non-merge dispatch: exactly one plain (non-range) target and no excludes
-# still means "check out this PR" (the original, heavily-used behavior) —
-# anything more flexible (multiple ids, a range, or -x) means "list this
-# specific set" instead, since you can't check out more than one PR at once.
-if [ "$subcmd" != "merge" ] && [ "${#raw_targets[@]}" -eq 1 ] && [ "${#raw_excludes[@]}" -eq 0 ] \
+# No-subcommand dispatch: exactly one plain (non-range) target and no
+# excludes still means "check out this PR" (the original, heavily-used
+# behavior) — anything more flexible (multiple ids, a range, or -x) means
+# "list this specific set" instead, since you can't check out more than one
+# PR at once. `git pr list <id>` always means list, even for a single plain
+# id — that's the whole point of naming the subcommand explicitly.
+if [ "$subcmd" = "" ] && [ "${#raw_targets[@]}" -eq 1 ] && [ "${#raw_excludes[@]}" -eq 0 ] \
   && ! printf '%s' "${raw_targets[0]}" | grep -qE '^[0-9]+-[0-9]+$'; then
   id="${raw_targets[0]}"
 fi
@@ -458,11 +466,13 @@ if [ "$subcmd" = "merge" ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════
-# No single checkout target: list PRs (titles by default) instead.
-#   - no targets            → your open PRs (optionally minus -x excludes)
-#   - targets (multi/range) → exactly those PRs, any author, any state
-#     (naming them explicitly is not scoped to you — same principle as
-#     `git pr merge <ids>`), optionally minus -x excludes
+# No single checkout target: list PRs (titles by default) instead. Reached
+# via explicit `git pr list ...` (any target count, including one) or the
+# implicit bare form (2+ targets, a range, or -x, kept for backward compat).
+#   - no targets → your open PRs (optionally minus -x excludes)
+#   - targets    → exactly those PRs, any author, any state (naming them
+#     explicitly is not scoped to you — same principle as `git pr merge
+#     <ids>`), optionally minus -x excludes
 # ══════════════════════════════════════════════════════════════════════════
 if [ "$subcmd" != "merge" ] && [ -z "$id" ]; then
   rows=""
