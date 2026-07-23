@@ -4,8 +4,8 @@
 # PRs and real branches — nothing generated or guessed.
 if (( CURRENT == 2 )); then
   _alternative \
-    'subcommands:subcommand:(merge)' \
-    'flags:flag:(-h --help -nt --no-title)' \
+    'subcommands:subcommand:(merge list)' \
+    'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
     'ids:PR or branch:_gtools_pr_ids'
   return
 fi
@@ -19,6 +19,11 @@ if [[ ${words[2]} == merge ]]; then
     'ids:PR, branch, or NNN-MMM range:_gtools_pr_ids'
   return
 fi
+# Bare (no subcommand) or `list` share the same grammar: ids/ranges, -a/--all,
+# -x/--exclude.
+case ${words[CURRENT-1]} in
+  -x|--exclude) _gtools_pr_ids; return ;;
+esac
 _alternative \
-  'flags:flag:(-h --help -nt --no-title)' \
+  'flags:flag:(-h --help -nt --no-title -a --all -x --exclude)' \
   'ids:PR, branch, or URL:_gtools_pr_ids'
