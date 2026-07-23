@@ -77,32 +77,40 @@ else
   command -v gh >/dev/null 2>&1 && echo "   Now run 'gh auth login' once to authenticate."
 fi
 
-# Best-effort check: is $fndir already on zsh's fpath in an interactive
-# shell? If so, completion (incl. `git new` for short-name Tab-cycling) just
-# works already — nothing more to do. If not, this is the one-time GENERAL
-# Homebrew zsh-completions snippet, not anything gtools-specific — it also
-# covers every other formula's completions, present and future.
-on_fpath=0
+# Best-effort check, in a LOGIN shell (which is what Terminal.app runs, and
+# what sources ~/.zprofile → `brew shellenv`): does zsh's OWN _git win? These
+# commands are `git <subcommand>`, so completing their arguments goes through
+# whatever _git is first on fpath. zsh's own _git dispatches to _git-<cmd>
+# user functions (which is how ours work); the _git that Homebrew's git
+# formula ships does NOT — it sends unknown subcommands' arguments to plain
+# file completion. `brew shellenv` prepends Homebrew's site-functions dir, so
+# by default brew's _git wins and `git pr list <TAB>` / `git new <TAB>` just
+# list files. The snippet below puts zsh's own function dirs back in front
+# (so its _git wins) while keeping the completion dir on fpath.
+git_ok=0
 if command -v zsh >/dev/null 2>&1; then
-  case ":$(zsh -ic 'echo $fpath' 2>/dev/null):" in
-    *":$fndir:"*) on_fpath=1 ;;
+  # Force-load _git and read where it came from (functions_source is reliable;
+  # `whence -v` omits the path for a not-yet-loaded autoload function). A
+  # system dir means zsh's own _git — the one that dispatches to _git-<cmd>.
+  case "$(zsh -lic 'autoload +X _git 2>/dev/null; print -r -- ${functions_source[_git]}' 2>/dev/null)" in
+    /usr/share/zsh/*) git_ok=1 ;;
   esac
 fi
 
 echo
-if [ "$on_fpath" = 1 ]; then
-  echo "zsh completion is already set up — Tab-completion (incl. 'git new' for"
-  echo "short-name cycling on new branches) works with no further action."
+if [ "$git_ok" = 1 ]; then
+  echo "zsh completion is set up — Tab-completion (incl. 'git new' for short-name"
+  echo "cycling, and 'git pr list <TAB>') works with no further action."
 else
   echo "For Tab-completion of these commands — including 'git new <TAB>' for"
-  echo "cycling through short names instead of typing a long one — add this to"
-  echo "~/.zshrc (the general Homebrew zsh-completions snippet, not specific to"
-  echo "gtools; skip it if you already have something like it). Append, don't"
-  echo "prepend: Homebrew's git package ships its own _git (a different"
-  echo "implementation) in this same directory, which doesn't support the"
-  echo "_git-<subcommand> dispatch these completions rely on — prepending would"
-  echo "let it shadow the system _git that does."
-  echo "       fpath+=(\"$fndir\")"
+  echo "cycling through short names — add this to ~/.zshrc. It ensures zsh's OWN"
+  echo "git completion wins: Homebrew's git formula ships a different _git that"
+  echo "ignores git-<subcommand> completions and, because 'brew shellenv' puts"
+  echo "it first on fpath, would otherwise send 'git pr list'/'git new' argument"
+  echo "completion to plain file listing. Putting the system function dirs first"
+  echo "fixes that while keeping the completion dir (below) on fpath:"
+  echo "       typeset -U fpath"
+  echo "       fpath=(/usr/share/zsh/\${ZSH_VERSION}/functions /usr/share/zsh/site-functions \"$fndir\" \$fpath)"
   echo "       autoload -Uz compinit && compinit"
 fi
 echo

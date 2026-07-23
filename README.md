@@ -42,19 +42,24 @@ works no matter what's driving your terminal (Claude, Codex, you by hand),
 since it fires on the completion itself, not on any tool choosing to
 cooperate.
 
-If `install.sh` doesn't detect that directory on your `$fpath` already, it
-prints the one-time setup (the standard Homebrew zsh-completions snippet —
-not gtools-specific, and skippable if you already have something like it).
-Append, don't prepend: if you also have Homebrew's `git` formula installed,
-it ships its own `_git` (a different implementation, in the same kind of
-directory) that doesn't support the `_git-<subcommand>` dispatch these
-completions rely on — prepending would let it shadow the system `_git` that
-does, breaking dispatch even though gtools' own files are fine:
+If `install.sh` doesn't detect that zsh's own `_git` wins, it prints a
+one-time setup snippet. The subtlety: these are `git <subcommand>` completions,
+so completing their arguments goes through whatever `_git` is first on
+`fpath`. zsh's own `_git` dispatches to `_git-<cmd>` user functions (how these
+work); the `_git` that **Homebrew's `git` formula** ships does **not** — it
+sends unknown subcommands' arguments to plain file completion. And `brew
+shellenv` prepends Homebrew's `site-functions` dir, so by default brew's `_git`
+wins and `git pr list <TAB>` / `git new <TAB>` just list files. The fix puts
+zsh's own function dirs back in front (so its `_git` wins) while keeping the
+completion dir on `fpath`:
 
 ```zsh
-fpath+=("~/.local/share/zsh/site-functions")   # path install.sh prints
+typeset -U fpath
+fpath=(/usr/share/zsh/${ZSH_VERSION}/functions /usr/share/zsh/site-functions "$COMPLETION_DIR" $fpath)
 autoload -Uz compinit && compinit
 ```
+
+(`$COMPLETION_DIR` is `install.sh`'s target, e.g. `~/.local/share/zsh/site-functions`; with the Homebrew formula it's already on `fpath` and you can drop it.)
 
 ## Commands
 
