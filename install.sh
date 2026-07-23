@@ -32,6 +32,18 @@ for m in "$here"/man/git-*.1; do
   echo "linked  $name  →  $mandir/$name"
 done
 
+# zsh completion: symlink next to the man pages (<target>/../share/zsh), and
+# print the source line — unlike bin/man, this can't just be "on PATH"; it
+# has to be `source`d from ~/.zshrc, and specifically BEFORE compinit runs
+# (see the file's own header for why).
+zshdir="$(dirname "$target")/share/zsh"
+mkdir -p "$zshdir"
+completion="$here/share/zsh/git-tools-completion.zsh"
+if [ -f "$completion" ]; then
+  ln -sf "$completion" "$zshdir/git-tools-completion.zsh"
+  echo "linked  git-tools-completion.zsh  →  $zshdir/git-tools-completion.zsh"
+fi
+
 case ":$PATH:" in
   *":$target:"*) ;;
   *)
@@ -62,5 +74,10 @@ else
   command -v gh >/dev/null 2>&1 && echo "   Now run 'gh auth login' once to authenticate."
 fi
 
+echo
+echo "For Tab-completion of these commands (and short-name cycling for new"
+echo "branches on 'git switch -c' / 'git checkout -b'), add this to ~/.zshrc"
+echo "ABOVE any 'compinit' line:"
+echo "       source \"$zshdir/git-tools-completion.zsh\""
 echo
 echo "Done. Try:  git sweep -h   (or full man page: git sweep --help)"

@@ -25,6 +25,28 @@ cd ~/git-tools
 `./install.sh` symlinks, so a later `git pull` here updates the commands in
 place. Make sure the target dir is on your `PATH`.
 
+## zsh completion
+
+`install.sh` also symlinks a completion file and prints the line to add. It
+gives Tab-completion for every command above (real branches, real open PRs —
+nothing generated or guessed, same principle as `cd` completing real
+directories), plus one more thing: `git switch -c <TAB>` and
+`git checkout -b <TAB>` cycle through short *words already used in this
+repo's branch names* (via `_multi_parts`), so naming a new branch is Tab
+through real precedent instead of typing a sentence.
+
+```zsh
+# ~/.zshrc, ABOVE any `compinit` line:
+source "~/.local/share/zsh/git-tools-completion.zsh"
+# (install.sh prints the exact path for your setup — differs if you installed
+# via Homebrew or a custom -b dir)
+```
+
+Has to be `source`d, not just on your `fpath` — and specifically *before*
+`compinit`'s first run, so it wins the `(( $+functions[_git-switch] )) || ...`
+guard that zsh's own `_git` uses for its built-ins. See the file's own header
+for why.
+
 ## Commands
 
 | Command | What it does |
