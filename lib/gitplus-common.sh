@@ -1,4 +1,4 @@
-# git-tools-common.sh — shared helpers for the git-* commands.
+# gitplus-common.sh — shared helpers for the git-* commands.
 #
 # Sourced, not executed — each script resolves its own real location
 # (following symlinks, since these are installed as symlinks) and sources

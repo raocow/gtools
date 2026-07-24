@@ -1,4 +1,4 @@
-# git-tools
+# gitplus
 
 Personal custom `git` subcommands. Git treats any executable named `git-<name>`
 on your `PATH` as `git <name>`, so these work like built-ins once installed.
@@ -15,8 +15,8 @@ install that before installing this.
 ## Install
 
 ```bash
-git clone <this-repo> ~/git-tools
-cd ~/git-tools
+git clone <this-repo> ~/gitplus
+cd ~/gitplus
 ./install.sh                 # symlinks bin/git-* into ~/.local/bin
 # (pass a dir to link elsewhere, e.g. ./install.sh ~/bin)
 ```
@@ -232,7 +232,7 @@ The bookend to `git pr`:
 ---
 
 Genuinely shared logic (the color/step/warn output helpers, base-branch
-resolution, PR-range expansion) lives once in `lib/git-tools-common.sh`,
+resolution, PR-range expansion) lives once in `lib/gitplus-common.sh`,
 which each command locates relative to its own real path (following the
 symlink it's installed as) and sources — not copy-pasted per file. Only
 things that are *coincidentally* similar but reasonably diverge per command

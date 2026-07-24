@@ -15,9 +15,9 @@
 # offered; naming/merging stays your call — `git pr merge --all` and the bare
 # `git pr` listing are scoped to you in the command itself.
 local -a prs
-prs=(${(f)"$(_gtools_open_prs)"})
+prs=(${(f)"$(_gitplus_open_prs)"})
 (( $#prs )) || return
-local me; me="$(_gtools_gh_login)"
+local me; me="$(_gitplus_gh_login)"
 
 local -a mine_nums mine_descs other_nums other_descs
 local p num rest branch author title w=0

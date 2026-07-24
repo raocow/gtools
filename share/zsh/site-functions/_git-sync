@@ -5,9 +5,9 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   _message -r 'not inside a git repository'; return
 fi
 case ${words[CURRENT-1]} in
-  -b|--base) _gtools_branches; return ;;
-  -x|--exclude) _gtools_pr_ids; return ;;
+  -b|--base) _gitplus_branches; return ;;
+  -x|--exclude) _gitplus_pr_ids; return ;;
 esac
 _alternative \
   'flags:Flag:(-a --all -x --exclude -b --base -n --dry-run -h --help)' \
-  'ids:Branch, PR, or NNN-MMM range:_gtools_pr_ids'
+  'ids:Branch, PR, or NNN-MMM range:_gitplus_pr_ids'

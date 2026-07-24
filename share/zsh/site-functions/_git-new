@@ -10,14 +10,14 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   _message -r 'not inside a git repository'; return
 fi
 case ${words[CURRENT-1]} in
-  -b|--base) _gtools_branches; return ;;
+  -b|--base) _gitplus_branches; return ;;
 esac
 if [[ ${words[CURRENT]} == -* ]]; then
   _alternative 'flags:Flag:(-b --base -h --help)'
   return
 fi
 local -a tokens
-tokens=(${(f)"$(_gtools_branch_tokens)"})
+tokens=(${(f)"$(_gitplus_branch_tokens)"})
 # The first lone `-` is an end-of-options terminator (zparseopts consumes
 # it); the second is the actual separator. Without the terminator, the
 # separator itself gets swallowed as an option, the array name is taken as

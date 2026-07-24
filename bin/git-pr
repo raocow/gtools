@@ -107,7 +107,7 @@
 set -euo pipefail
 
 # Resolve this script's real location (following symlinks — it's installed as
-# one) to find lib/git-tools-common.sh, shared across the git-* tools: the
+# one) to find lib/gitplus-common.sh, shared across the git-* tools: the
 # color/step/warn helpers and expand_ranges().
 _src="${BASH_SOURCE[0]}"
 while [ -h "$_src" ]; do
@@ -115,7 +115,7 @@ while [ -h "$_src" ]; do
   _src="$(readlink "$_src")"
   [[ "$_src" != /* ]] && _src="$_dir/$_src"
 done
-source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/git-tools-common.sh"
+source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/gitplus-common.sh"
 
 usage() {
   cat <<'EOF'
@@ -246,7 +246,7 @@ if [ "$_here" = 1 ]; then
   done
 fi
 
-# expand_ranges (shared, from lib/git-tools-common.sh) expands "NNN-MMM"
+# expand_ranges (shared, from lib/gitplus-common.sh) expands "NNN-MMM"
 # range tokens into individual ids — a token only counts as a range if it's
 # ENTIRELY digits-hyphen-digits, so a branch name like "task-42" passes
 # through untouched. Applied to both the target list and the exclude list,
@@ -613,7 +613,7 @@ if [ -n "$info" ]; then
   # gh pr checkout creates the branch or fast-forwards an existing one, leaving
   # us on it.
   if gh pr checkout "$id" >/dev/null 2>&1; then
-    git config "branch.$branch.gtools-pr" "$num" 2>/dev/null || true
+    git config "branch.$branch.gitplus-pr" "$num" 2>/dev/null || true
     step "switched to $branch ${_dim}(PR #$num, up to date)${_off}"
     exit 0
   fi
@@ -622,7 +622,7 @@ if [ -n "$info" ]; then
   warn "head branch gone from origin — using refs/pull/$num/head"
   if git fetch --quiet origin "refs/pull/$num/head:$branch" 2>/dev/null; then
     git switch --quiet "$branch"
-    git config "branch.$branch.gtools-pr" "$num" 2>/dev/null || true
+    git config "branch.$branch.gitplus-pr" "$num" 2>/dev/null || true
     step "switched to $branch ${_dim}(PR #$num)${_off}"
   else
     echo "git pr: couldn't check out PR #$num — '$branch' may have diverged; resolve by hand" >&2
@@ -634,9 +634,9 @@ fi
 # gh couldn't resolve $id (GitHub unreachable, or no PR for it). Fall back to a
 # local branch: the stamped one for a number, or the named branch itself.
 if printf '%s' "$id" | grep -qE '^[0-9]+$'; then
-  stamped=$(git config --get-regexp '^branch\..*\.gtools-pr$' 2>/dev/null \
+  stamped=$(git config --get-regexp '^branch\..*\.gitplus-pr$' 2>/dev/null \
     | awk -v n="$id" '$2 == n { print $1; exit }' \
-    | sed -E 's/^branch\.(.*)\.gtools-pr$/\1/') || true
+    | sed -E 's/^branch\.(.*)\.gitplus-pr$/\1/') || true
   if [ -n "${stamped:-}" ] && git show-ref --verify --quiet "refs/heads/$stamped"; then
     git switch --quiet "$stamped"
     warn "couldn't reach GitHub — on existing $stamped (not updated)"

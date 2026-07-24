@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # Resolve this script's real location (following symlinks — it's installed as
-# one) to find lib/git-tools-common.sh, shared across the git-* tools:
+# one) to find lib/gitplus-common.sh, shared across the git-* tools:
 # require_git_repo() and require_gh() here.
 _src="${BASH_SOURCE[0]}"
 while [ -h "$_src" ]; do
@@ -24,7 +24,7 @@ while [ -h "$_src" ]; do
   _src="$(readlink "$_src")"
   [[ "$_src" != /* ]] && _src="$_dir/$_src"
 done
-source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/git-tools-common.sh"
+source "$(cd -P "$(dirname "$_src")/.." && pwd)/lib/gitplus-common.sh"
 
 case "${1:-}" in
   -h|--help)

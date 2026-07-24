@@ -2,7 +2,7 @@
 #
 # Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>author<TAB>title".
 # ALL open PRs (any author) — checking out someone else's PR is a core use of
-# `git pr`. The consumer (_gtools_pr_nums) separates yours from others' using
+# `git pr`. The consumer (_gitplus_pr_nums) separates yours from others' using
 # your login (cached in gh-login); `git pr merge --all` and the bare `git pr`
 # listing stay scoped to you in the command itself, independently of this.
 #
@@ -15,7 +15,7 @@
 # after 60s).
 local ttl=30
 local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || return
-local dir="${TMPDIR:-/tmp}/gtools-comp"
+local dir="${TMPDIR:-/tmp}/gitplus-comp"
 [[ -d $dir ]] || mkdir -p "$dir" 2>/dev/null
 local key="${top//\//_}" cache lock
 cache="$dir/prsv2$key"; lock="$dir/prsv2$key.lock"
