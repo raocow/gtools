@@ -1,33 +1,41 @@
 #autoload
 #
-# Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>title" —
-# best effort, silent if gh/network is unavailable.
+# Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>title".
 #
-# Cached per-repo for a short TTL. A fresh cache is served instantly (just a
-# file read); only a stale/missing cache pays for `gh pr list` (~0.5s). To make
-# even the first Tab instant, call this function in the BACKGROUND from a chpwd
-# hook (`_gtools_open_prs &>/dev/null &`) so the cache is pre-warmed on entering
-# a repo — then the completion just reads it and never waits on the network.
+# Served NON-BLOCKING: returns the cached copy instantly and never waits on
+# `gh` (~0.5s of network + keyring). When the cache is older than the TTL it's
+# refreshed in the BACKGROUND, so the freshly-updated list is in place for the
+# next call — new/closed PRs show up on their own within ~TTL seconds, and no
+# single Tab ever pays the network cost. A lock dir keeps rapid calls from
+# stampeding parallel `gh` runs (a lock left by a killed refresh is reclaimed
+# after 60s). The chpwd pre-warm hook (gtools block in ~/.zshrc) just calls
+# this on entering a repo so the very first Tab is already warm.
 local ttl=30
 local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || return
 local dir="${TMPDIR:-/tmp}/gtools-comp"
 [[ -d $dir ]] || mkdir -p "$dir" 2>/dev/null
-local cache="$dir/prs${top//\//_}"
+local key="${top//\//_}" cache lock
+cache="$dir/prs$key"; lock="$dir/prs$key.lock"
 
 local now mtime
 now="$(date +%s 2>/dev/null || echo 0)"
-mtime="$(stat -f %m "$cache" 2>/dev/null || echo 0)"
-if [[ -f $cache ]] && (( now - mtime < ttl )); then
-  cat "$cache"
-  return
-fi
 
-local out
-out="$(gh pr list --state open --limit 200 --json number,headRefName,title \
-  --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>/dev/null)"
-if [[ -n $out ]]; then
-  print -r -- "$out" >| "$cache" 2>/dev/null
-  print -r -- "$out"
-elif [[ -f $cache ]]; then
-  cat "$cache"   # gh failed (offline?) — stale is better than nothing
+# Serve whatever we have right now — instant, never blocks on the network.
+[[ -f $cache ]] && cat "$cache"
+
+# Refresh in the background when stale/missing, so the next call is current.
+mtime="$(stat -f %m "$cache" 2>/dev/null || echo 0)"
+if (( now - mtime >= ttl )); then
+  # Reclaim a stale lock from a refresh that died before cleaning up.
+  if [[ -d $lock ]] && (( now - $(stat -f %m "$lock" 2>/dev/null || echo 0) > 60 )); then
+    rmdir "$lock" 2>/dev/null
+  fi
+  if mkdir "$lock" 2>/dev/null; then
+    # Fully detached (own fds, disowned) so the background refresh can't touch
+    # the completion display it may have been launched from.
+    { gh pr list --state open --limit 200 --json number,headRefName,title \
+        --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' >| "$cache.new" 2>/dev/null \
+        && mv -f "$cache.new" "$cache"
+      rmdir "$lock" 2>/dev/null; } </dev/null >/dev/null 2>&1 &!
+  fi
 fi
