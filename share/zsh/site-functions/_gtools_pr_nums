@@ -1,25 +1,43 @@
 #autoload
 #
-# Open PRs, shown as "NUM -- title" with the numbers right-aligned into a
-# column — for `git pr`, which is about picking a PR. Numbers only, no branch
-# list: dumping every local/remote branch here would bury the handful of PRs
-# you actually want (you can still type a branch name; it just isn't offered).
-# The inserted value is the bare number; the padded "NUM -- title" is display
-# only. Uses _wanted (not raw `compadd -X`, and not `_describe`): _wanted is
-# the correct helper for use inside an _alternative action — it produces a
-# group header that honors the ':completion:*:descriptions' format zstyle (so
-# the header can be styled to stand out), and unlike _describe it nests
-# correctly and still generates matches.
-local -a prs pr_nums pr_descs
+# Open PRs as completion candidates for `git pr` — the value inserted is the
+# bare PR number; the display is "NUM -- title" with numbers right-aligned.
+# Split into two groups so someone else's PR is never mistaken for yours:
+#   - "Your open PRs"      (author == your login)
+#   - "Others' open PRs"   (annotated "(@author)", and styled distinctly if the
+#                           :completion:*:other-prs format zstyle is set)
+# Checking out another person's PR is a core use of `git pr`, so both groups
+# are offered; but naming/merging is your call — `git pr merge --all` and the
+# bare `git pr` listing stay scoped to you in the command itself.
+#
+# Numbers only, no branch list (that would bury the PRs). Uses _wanted per
+# group — the correct helper inside an _alternative action; it gives each
+# group a header that honors the descriptions format zstyle.
+local -a prs
 prs=(${(f)"$(_gtools_open_prs)"})
-local p num rest branch title w=0
+(( $#prs )) || return
+local me; me="$(_gtools_gh_login)"
+
+local -a mine_nums mine_descs other_nums other_descs
+local p num rest branch author title w=0
 for p in $prs; do num="${p%%$'\t'*}"; (( ${#num} > w )) && w=${#num}; done
 for p in $prs; do
   num="${p%%$'\t'*}"; rest="${p#*$'\t'}"
-  branch="${rest%%$'\t'*}"; title="${rest#*$'\t'}"
-  pr_nums+=("$num")
-  pr_descs+=("${(l:w:)num} -- ${title}")
+  branch="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  author="${rest%%$'\t'*}"; title="${rest#*$'\t'}"
+  if [[ -z $me || $author == $me ]]; then
+    # No login cached yet (first Tab before the bg refresh) → treat as yours so
+    # everything still shows; it resolves into the right groups next Tab.
+    mine_nums+=("$num"); mine_descs+=("${(l:w:)num} -- ${title}")
+  else
+    other_nums+=("$num"); other_descs+=("${(l:w:)num} -- ${title}  (@${author})")
+  fi
 done
-(( $#pr_nums )) || return
+
 local expl
-_wanted open-prs expl 'Open PRs' compadd -d pr_descs -a pr_nums
+if (( $#mine_nums )); then
+  _wanted your-prs expl 'Your open PRs' compadd -d mine_descs -a mine_nums
+fi
+if (( $#other_nums )); then
+  _wanted other-prs expl "Others' open PRs" compadd -d other_descs -a other_nums
+fi

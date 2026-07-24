@@ -1,6 +1,10 @@
 #autoload
 #
-# Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>title".
+# Open PRs for this repo, tab-separated "NUMBER<TAB>head-branch<TAB>author<TAB>title".
+# ALL open PRs (any author) — checking out someone else's PR is a core use of
+# `git pr`. The consumer (_gtools_pr_nums) separates yours from others' using
+# your login (cached in gh-login); `git pr merge --all` and the bare `git pr`
+# listing stay scoped to you in the command itself, independently of this.
 #
 # Served NON-BLOCKING: returns the cached copy instantly and never waits on
 # `gh` (~0.5s of network + keyring). When the cache is older than the TTL it's
@@ -8,14 +12,13 @@
 # next call — new/closed PRs show up on their own within ~TTL seconds, and no
 # single Tab ever pays the network cost. A lock dir keeps rapid calls from
 # stampeding parallel `gh` runs (a lock left by a killed refresh is reclaimed
-# after 60s). The chpwd pre-warm hook (gtools block in ~/.zshrc) just calls
-# this on entering a repo so the very first Tab is already warm.
+# after 60s).
 local ttl=30
 local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || return
 local dir="${TMPDIR:-/tmp}/gtools-comp"
 [[ -d $dir ]] || mkdir -p "$dir" 2>/dev/null
 local key="${top//\//_}" cache lock
-cache="$dir/prs$key"; lock="$dir/prs$key.lock"
+cache="$dir/prsv2$key"; lock="$dir/prsv2$key.lock"
 
 local now mtime
 now="$(date +%s 2>/dev/null || echo 0)"
@@ -33,8 +36,9 @@ if (( now - mtime >= ttl )); then
   if mkdir "$lock" 2>/dev/null; then
     # Fully detached (own fds, disowned) so the background refresh can't touch
     # the completion display it may have been launched from.
-    { gh pr list --state open --limit 200 --json number,headRefName,title \
-        --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' >| "$cache.new" 2>/dev/null \
+    { [[ -f "$dir/gh-login" ]] || gh api user --jq '.login' >| "$dir/gh-login" 2>/dev/null
+      gh pr list --state open --limit 200 --json number,headRefName,title,author \
+        --jq '.[] | "\(.number)\t\(.headRefName)\t\(.author.login)\t\(.title)"' >| "$cache.new" 2>/dev/null \
         && mv -f "$cache.new" "$cache"
       rmdir "$lock" 2>/dev/null; } </dev/null >/dev/null 2>&1 &!
   fi
